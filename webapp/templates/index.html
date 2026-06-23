@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CrowdShield AI - Crowd Monitoring & Prevention</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+    <!-- 1. HEADER BAR -->
+    <header class="header-bar">
+        <div class="header-left">
+            <div class="shield-icon">
+                <svg viewBox="0 0 24 24">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+            </div>
+            <h1 class="app-name">CrowdShield AI</h1>
+        </div>
+        <div class="header-right">
+            <!-- Status Pill: color and text updated dynamically by JS -->
+            <div id="status-pill" class="status-pill safe">
+                <span class="pulse-dot"></span>
+                <span id="status-text">Crowd levels normal</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- MAIN CONTAINER -->
+    <div class="dashboard-container">
+        
+        <!-- 2. MAIN GRID (Two Columns) -->
+        <main class="main-grid">
+            
+            <!-- LEFT COLUMN: Live Feed -->
+            <section class="left-column">
+                <div class="card feed-card">
+                    <!-- Video/Camera Placeholder Area (16:10 aspect ratio) -->
+                    <div class="camera-feed-area">
+                        <!-- Centered Camera Icon Placeholder -->
+                        <div class="camera-icon-placeholder">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+                            </svg>
+                            <span class="placeholder-label">VIDEO FEED STREAM</span>
+                        </div>
+
+                        <!-- Top-Left Badge: LIVE -->
+                        <div class="badge badge-top-left">
+                            <span class="live-dot"></span>
+                            <span>LIVE</span>
+                        </div>
+
+                        <!-- Top-Right Badge: People count -->
+                        <div class="badge badge-top-right">
+                            <span>People detected: </span>
+                            <span id="live-count-badge" class="count-highlight">0</span>
+                        </div>
+
+                        <!-- Bottom-Left Badge: Confidence -->
+                        <div class="badge badge-bottom-left">
+                            <span>Confidence: </span>
+                            <span id="live-confidence-badge">94%</span>
+                        </div>
+                    </div>
+
+                    <!-- View-Mode Toggle Buttons -->
+                    <div class="view-mode-toggles">
+                        <button id="btn-mode-raw" class="btn-toggle" onclick="setViewMode('raw')">Raw box</button>
+                        <button id="btn-mode-heatmap" class="btn-toggle active" onclick="setViewMode('heatmap')">Heatmap</button>
+                        <button id="btn-mode-grid" class="btn-toggle" onclick="setViewMode('grid')">Grid cell</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- RIGHT COLUMN: Status Summary -->
+            <section class="right-column">
+                
+                <!-- Risk Level Card -->
+                <div class="card risk-card">
+                    <div class="label-muted">Current risk level</div>
+                    <div id="risk-level-display" class="risk-value text-safe">Safe</div>
+                </div>
+
+                <!-- Stats Cards (Side by Side) -->
+                <div class="stats-row">
+                    <div class="card stat-sub-card">
+                        <div class="label-muted">People now</div>
+                        <div id="stat-people-now" class="stat-number">0</div>
+                    </div>
+                    <div class="card stat-sub-card">
+                        <div class="label-muted">Limit</div>
+                        <div id="stat-limit" class="stat-number">9</div>
+                    </div>
+                </div>
+
+                <!-- Capacity Card -->
+                <div class="card capacity-card">
+                    <div class="label-muted">Capacity used</div>
+                    <!-- Horizontal Progress Bar -->
+                    <div class="progress-container">
+                        <div id="capacity-progress-bar" class="progress-bar-fill fill-safe" style="width: 0%;"></div>
+                    </div>
+                    <div id="capacity-text" class="capacity-helper">
+                        0 of 9 people · 0% full
+                    </div>
+                </div>
+
+            </section>
+        </main>
+
+        <!-- 3. SAFETY THRESHOLDS CARD -->
+        <section class="full-width-section">
+            <div class="card thresholds-card">
+                <h2 class="card-title">Safety thresholds</h2>
+                <div class="thresholds-grid">
+                    
+                    <!-- Max people allowed -->
+                    <div class="threshold-column">
+                        <div class="slider-header">
+                            <label for="slider-max-people" class="label-primary">Max people allowed</label>
+                            <span id="val-max-people" class="slider-value">9</span>
+                        </div>
+                        <input type="range" id="slider-max-people" min="1" max="50" step="1" value="9" class="slider-input">
+                        <div class="helper-text">Total people the space can safely hold</div>
+                    </div>
+
+                    <!-- Crowding sensitivity -->
+                    <div class="threshold-column">
+                        <div class="slider-header">
+                            <label for="slider-sensitivity" class="label-primary">Crowding sensitivity</label>
+                            <span id="val-sensitivity" class="slider-value">5.0</span>
+                        </div>
+                        <input type="range" id="slider-sensitivity" min="1" max="10" step="0.1" value="5.0" class="slider-input">
+                        <div class="helper-text">How tightly packed before it's flagged</div>
+                    </div>
+
+                    <!-- Alert delay -->
+                    <div class="threshold-column">
+                        <div class="slider-header">
+                            <label for="slider-alert-delay" class="label-primary">Alert delay</label>
+                            <span id="val-alert-delay" class="slider-value">5s</span>
+                        </div>
+                        <input type="range" id="slider-alert-delay" min="0" max="30" step="1" value="5" class="slider-input">
+                        <div class="helper-text">Wait time before sounding an alert</div>
+                    </div>
+
+                </div>
+            </div>
+        </section>
+
+        <!-- 4. INCIDENT LOG CARD -->
+        <section class="full-width-section">
+            <div class="card log-card">
+                <h2 class="card-title">Incident log</h2>
+                <div id="log-list" class="log-list">
+                    <!-- Dynamic logs will be prepended here by JS -->
+                </div>
+            </div>
+        </section>
+
+    </div>
+
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
