@@ -1,0 +1,482 @@
+/* System Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+    /* Backgrounds */
+    --bg-page: #0f172a;       /* Dark Navy */
+    --bg-card: #1e293b;       /* Slate 800 */
+    --border-subtle: rgba(255, 255, 255, 0.08);
+    
+    /* Text Colors */
+    --text-primary: #f8fafc;   /* White/light gray */
+    --text-muted: #94a3b8;     /* Muted gray */
+    
+    /* Risk States Color Palette (Flat Colors) */
+    --color-safe: #10b981;      /* Emerald Green */
+    --color-safe-bg: rgba(16, 185, 129, 0.15);
+    
+    --color-caution: #f59e0b;   /* Amber Yellow */
+    --color-caution-bg: rgba(245, 158, 11, 0.15);
+    
+    --color-danger: #ef4444;    /* Rose Red */
+    --color-danger-bg: rgba(239, 68, 68, 0.15);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Inter', sans-serif;
+}
+
+body {
+    background-color: var(--bg-page);
+    color: var(--text-primary);
+    min-height: 100vh;
+    padding-bottom: 2rem;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* 1. HEADER BAR */
+.header-bar {
+    height: 56px;
+    background-color: var(--bg-card);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 0 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.shield-icon {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.shield-icon svg {
+    fill: none;
+    stroke: var(--text-primary);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    width: 20px;
+    height: 20px;
+}
+
+.app-name {
+    font-size: 18px;
+    font-weight: 500;
+}
+
+/* Status Pill States */
+.status-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 9999px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid transparent;
+}
+
+.status-pill.safe {
+    background-color: var(--color-safe-bg);
+    color: var(--color-safe);
+    border-color: rgba(16, 185, 129, 0.3);
+}
+
+.status-pill.caution {
+    background-color: var(--color-caution-bg);
+    color: var(--color-caution);
+    border-color: rgba(245, 158, 11, 0.3);
+}
+
+.status-pill.danger {
+    background-color: var(--color-danger-bg);
+    color: var(--color-danger);
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+/* Pulsing Dot in Status Pill */
+.pulse-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: currentColor;
+    display: inline-block;
+    animation: simple-pulse 2s infinite ease-in-out;
+}
+
+@keyframes simple-pulse {
+    0% { opacity: 0.4; }
+    50% { opacity: 1; }
+    100% { opacity: 0.4; }
+}
+
+/* CONTAINER */
+.dashboard-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* 2. MAIN GRID LAYOUT */
+.main-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 16px;
+    align-items: start;
+}
+
+@media (max-width: 768px) {
+    .main-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Card Styling Rules */
+.card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    padding: 20px;
+}
+
+.card-title {
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 16px;
+    color: var(--text-primary);
+}
+
+.label-muted {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+/* LEFT COLUMN: Feed Card */
+.feed-card {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.camera-feed-area {
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    background-color: #0b0f19; /* Lighter/darker background */
+    border-radius: 6px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.camera-icon-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    color: var(--text-muted);
+}
+
+.camera-icon-placeholder svg {
+    width: 48px;
+    height: 48px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0.4;
+}
+
+.placeholder-label {
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    font-weight: 500;
+    opacity: 0.6;
+}
+
+/* Overlay Badges */
+.badge {
+    position: absolute;
+    background-color: rgba(15, 23, 42, 0.75);
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.badge-top-left {
+    top: 12px;
+    left: 12px;
+}
+
+.live-dot {
+    width: 6px;
+    height: 6px;
+    background-color: var(--color-danger);
+    border-radius: 50%;
+    animation: simple-pulse 1s infinite ease-in-out;
+}
+
+.badge-top-right {
+    top: 12px;
+    right: 12px;
+}
+
+.count-highlight {
+    color: var(--color-safe);
+    font-weight: 700;
+}
+
+.badge-bottom-left {
+    bottom: 12px;
+    left: 12px;
+}
+
+/* View Mode Toggles buttons */
+.view-mode-toggles {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-toggle {
+    flex: 1;
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.15s ease;
+}
+
+.btn-toggle:hover {
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.btn-toggle.active {
+    background-color: var(--text-primary);
+    color: var(--bg-page);
+    border-color: var(--text-primary);
+}
+
+/* RIGHT COLUMN: Summary cards */
+.right-column {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* Risk level card */
+.risk-card {
+    text-align: center;
+}
+
+.risk-value {
+    font-size: 24px;
+    font-weight: 500;
+    margin-top: 4px;
+    text-transform: capitalize;
+}
+
+.text-safe { color: var(--color-safe); }
+.text-caution { color: var(--color-caution); }
+.text-danger { color: var(--color-danger); }
+
+/* Stats Row */
+.stats-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.stat-sub-card {
+    text-align: left;
+}
+
+.stat-number {
+    font-size: 24px;
+    font-weight: 500;
+    margin-top: 4px;
+    color: var(--text-primary);
+}
+
+/* Capacity progress card */
+.progress-container {
+    width: 100%;
+    height: 8px;
+    background-color: #0b0f19;
+    border-radius: 9999px;
+    overflow: hidden;
+    margin: 8px 0;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    border-radius: 9999px;
+    transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.fill-safe { background-color: var(--color-safe); }
+.fill-caution { background-color: var(--color-caution); }
+.fill-danger { background-color: var(--color-danger); }
+
+.capacity-helper {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* 3. SAFETY THRESHOLDS CARD */
+.thresholds-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+}
+
+@media (max-width: 768px) {
+    .thresholds-grid {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+}
+
+.threshold-column {
+    display: flex;
+    flex-direction: column;
+}
+
+.slider-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.label-primary {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.slider-value {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.slider-input {
+    width: 100%;
+    -webkit-appearance: none;
+    background: #0b0f19;
+    height: 6px;
+    border-radius: 3px;
+    outline: none;
+    margin-bottom: 6px;
+}
+
+.slider-input::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--text-primary);
+    cursor: pointer;
+    border: none;
+}
+
+.helper-text {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* 4. INCIDENT LOG CARD */
+.log-list {
+    display: flex;
+    flex-direction: column;
+    max-height: 280px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+/* Log Scrollbar styling */
+.log-list::-webkit-scrollbar {
+    width: 4px;
+}
+.log-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+.log-list::-webkit-scrollbar-thumb {
+    background: var(--border-subtle);
+    border-radius: 2px;
+}
+
+.log-entry {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.log-entry:last-child {
+    border-bottom: none;
+}
+
+.log-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-top: 5px;
+    flex-shrink: 0;
+}
+
+.log-dot.dot-safe { background-color: var(--color-safe); }
+.log-dot.dot-caution { background-color: var(--color-caution); }
+.log-dot.dot-danger { background-color: var(--color-danger); }
+
+.log-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.log-message {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.log-time {
+    font-size: 11px;
+    color: var(--text-muted);
+}
