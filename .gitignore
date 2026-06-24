@@ -8,18 +8,24 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Large Datasets
+# Large Datasets / Archives
 crowd density.v1-v1.yolov8/
 crowd density.v1-v1.yolov8.zip
+archive/
+archive.zip
 dataset/
 
-# Deep Learning / YOLO runs and weights
+# Deep Learning / YOLO runs, models and weights
 runs/
+models/
 *.pt
+*.pth
 *.onnx
-models/best.pt
-models/yolov8n.pt
 yolov8n.pt
+
+# Temporary test outputs / logs
+*.jpg
+crowd_comparison.csv
 
 # IDE configurations
 .vscode/
