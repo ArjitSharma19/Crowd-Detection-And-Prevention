@@ -38,39 +38,34 @@
                 <div class="card feed-card">
                     <!-- Video/Camera Placeholder Area (16:10 aspect ratio) -->
                     <div class="camera-feed-area">
-                        <!-- Centered Camera Icon Placeholder -->
-                        <div class="camera-icon-placeholder">
-                            <svg viewBox="0 0 24 24">
-                                <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
-                            </svg>
-                            <span class="placeholder-label">VIDEO FEED STREAM</span>
-                        </div>
-
-                        <!-- Top-Left Badge: LIVE -->
-                        <div class="badge badge-top-left">
-                            <span class="live-dot"></span>
-                            <span>LIVE</span>
-                        </div>
-
-                        <!-- Top-Right Badge: People count -->
-                        <div class="badge badge-top-right">
-                            <span>People detected: </span>
-                            <span id="live-count-badge" class="count-highlight">0</span>
-                        </div>
-
-                        <!-- Bottom-Left Badge: Confidence -->
-                        <div class="badge badge-bottom-left">
-                            <span>Confidence: </span>
-                            <span id="live-confidence-badge">94%</span>
-                        </div>
-                    </div>
-
-                    <!-- View-Mode Toggle Buttons -->
-                    <div class="view-mode-toggles">
-                        <button id="btn-mode-raw" class="btn-toggle" onclick="setViewMode('raw')">Raw box</button>
-                        <button id="btn-mode-heatmap" class="btn-toggle active" onclick="setViewMode('heatmap')">Heatmap</button>
-                        <button id="btn-mode-grid" class="btn-toggle" onclick="setViewMode('grid')">Grid cell</button>
-                    </div>
+                         <!-- Real-time Video Stream Image -->
+                        <img id="camera-feed-img" src="/video_feed?mode=raw" alt="Live Crowd Shield Stream" style="width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 4px;">
+ 
+                         <!-- Top-Left Badge: LIVE -->
+                         <div class="badge badge-top-left">
+                             <span class="live-dot"></span>
+                             <span>LIVE</span>
+                         </div>
+ 
+                         <!-- Top-Right Badge: People count -->
+                         <div class="badge badge-top-right">
+                             <span>People detected: </span>
+                             <span id="live-count-badge" class="count-highlight">0</span>
+                         </div>
+ 
+                         <!-- Bottom-Left Badge: Confidence -->
+                         <div class="badge badge-bottom-left">
+                             <span>Confidence: </span>
+                             <span id="live-confidence-badge">94%</span>
+                         </div>
+                     </div>
+ 
+                     <!-- View-Mode Toggle Buttons -->
+                     <div class="view-mode-toggles">
+                         <button id="btn-mode-raw" class="btn-toggle active" onclick="setViewMode('raw')">Raw box</button>
+                         <button id="btn-mode-heatmap" class="btn-toggle" onclick="setViewMode('heatmap')">Heatmap</button>
+                         <button id="btn-mode-grid" class="btn-toggle" onclick="setViewMode('grid')">Grid cell</button>
+                     </div>
                 </div>
             </section>
 
@@ -144,6 +139,38 @@
                         </div>
                         <input type="range" id="slider-alert-delay" min="0" max="30" step="1" value="5" class="slider-input">
                         <div class="helper-text">Wait time before sounding an alert</div>
+                    </div>
+
+                    <!-- Detection Confidence -->
+                    <div class="threshold-column">
+                        <div class="slider-header">
+                            <label for="slider-confidence" class="label-primary">Detection confidence</label>
+                            <span id="val-confidence" class="slider-value">0.20</span>
+                        </div>
+                        <input type="range" id="slider-confidence" min="0.05" max="0.90" step="0.05" value="0.20" class="slider-input">
+                        <div class="helper-text">Lower values detect more (higher recall)</div>
+                    </div>
+
+                    <!-- Detection Resolution -->
+                    <div class="threshold-column">
+                        <div class="slider-header">
+                            <label for="slider-resolution" class="label-primary">Detection resolution</label>
+                            <span id="val-resolution" class="slider-value">960px</span>
+                        </div>
+                        <input type="range" id="slider-resolution" min="640" max="1280" step="160" value="960" class="slider-input">
+                        <div class="helper-text">Higher values improve small object detection</div>
+                    </div>
+
+                    <!-- Detector Mode Selection -->
+                    <div class="threshold-column">
+                        <div class="slider-header">
+                            <label for="select-model-type" class="label-primary">Detector mode</label>
+                        </div>
+                        <select id="select-model-type" class="slider-input" style="background: #0b0f19; color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: 4px; height: 32px; padding: 0 8px; outline: none; margin-top: 4px; cursor: pointer;">
+                            <option value="general">General Mode (Webcam / Single Person)</option>
+                            <option value="crowd">Dense Crowd Mode (Custom Weights)</option>
+                        </select>
+                        <div class="helper-text">Switch model based on camera environment</div>
                     </div>
 
                 </div>

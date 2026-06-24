@@ -10,7 +10,7 @@ This project is built using a **hybrid workflow**:
 
 ## 🚀 Quick Start (Local Web Dashboard)
 
-You can run the web dashboard immediately. It will search for custom weights, download pre-trained weights (`yolov8n.pt`) as a fallback, and automatically initialize a **synthetic crowd simulation stream** if no physical webcam is connected.
+You can run the web dashboard immediately. It will search for custom weights, download pre-trained weights (`yolo11n.pt`) as a fallback, and automatically initialize a **synthetic crowd simulation stream** if no physical webcam is connected.
 
 ### 1. Install Dependencies
 Create a virtual environment (optional but recommended) and install requirements:
@@ -37,23 +37,29 @@ Open your browser and navigate to: **`http://127.0.0.1:8000`**
 
 ---
 
-## 🧠 Google Colab Training Workflow
+## 🧠 Model Training Workflow (Local or Colab)
 
-To fine-tune a model on custom crowd/person datasets:
+To fine-tune a model on custom crowd/person datasets, you can train either **locally** (recommended if you have a GPU) or using **Google Colab**:
 
-1. Locate the pre-configured training notebook in this folder: `train_crowd_detector.ipynb`.
-2. Go to [Google Colab](https://colab.research.google.com/) and upload `train_crowd_detector.ipynb`.
-3. Select a **GPU Runtime** (Runtime > Change runtime type > GPU).
-4. Run the setup cells to connect your Google Drive and install the training libraries.
-5. Provide your dataset links (Roboflow exports or zip files on Drive) and run the training cell.
-6. Once training completes, download the resulting model weights file: `best.pt`.
-7. Move `best.pt` to the `models/` directory in this workspace folder on your computer:
-   ```text
-   Crowd Detection & Prevention/
-   └── models/
-       └── best.pt
+### Option A: Local GPU Training (Recommended)
+If your machine has a dedicated NVIDIA GPU (like your RTX 4060):
+1. Activate your virtual environment and ensure you have CUDA-enabled PyTorch installed.
+2. Run the standalone training script:
+   ```bash
+   python train.py --model yolo11m.pt --epochs 100 --batch 8 --name train_yolo11m
    ```
-8. Restart your local dashboard. It will automatically detect and load your custom fine-tuned weights!
+3. Once training completes, copy the resulting weights file:
+   ```bash
+   copy runs\detect\train_yolo11m\weights\best.pt models\best.pt
+   ```
+
+### Option B: Google Colab Training
+1. Go to [Google Colab](https://colab.research.google.com/) and upload `train_crowd_detector.ipynb`.
+2. Select a **GPU Runtime** (Runtime > Change runtime type > GPU).
+3. Follow the setup and training cells.
+4. Download the resulting `best.pt` weights and save them to `models/best.pt` in this directory.
+
+After copying `best.pt` to `models/best.pt`, restart the web dashboard (`python main.py`). The system will automatically detect and load your custom weights!
 
 ---
 

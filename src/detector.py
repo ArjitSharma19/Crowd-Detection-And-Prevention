@@ -4,36 +4,41 @@ import numpy as np
 from ultralytics import YOLO
 
 class CrowdDetector:
-    def __init__(self, model_path=None):
+    def __init__(self, model_path=None, imgsz=960, confidence_threshold=0.25):
         """
-        Initializes the YOLOv8 object detector.
-        If a custom model path is provided (e.g. 'models/best.pt') and exists, it will load it.
-        Otherwise, it defaults to the pre-trained 'yolov8n.pt' (nano) model.
+        Initializes the YOLO object detector.
+        Supports switching between a General Detector (trained on COCO) and a Crowd Detector (custom fine-tuned).
         """
-        # Look for custom best.pt weights in the models directory first
+        self.imgsz = imgsz
+        self.confidence_threshold = confidence_threshold
+        self.model_type = "general"  # "general" or "crowd"
+
+        # Load general detector (standard pretrained model on disk)
+        print("Loading general COCO detector 'yolo11m.pt'...")
+        self.model_general = YOLO("yolo11m.pt")
+
+        # Load custom fine-tuned crowd model
         local_custom_path = os.path.join("models", "best.pt")
-        
         if model_path and os.path.exists(model_path):
-            self.model_path = model_path
+            print(f"Loading custom crowd weights from {model_path}")
+            self.model_crowd = YOLO(model_path)
         elif os.path.exists(local_custom_path):
-            self.model_path = local_custom_path
-            print(f"Loading custom fine-tuned weights from {local_custom_path}")
+            print(f"Loading custom crowd weights from {local_custom_path}")
+            self.model_crowd = YOLO(local_custom_path)
         else:
-            self.model_path = "yolov8n.pt"  # Will automatically download via ultralytics if not found
-            print("No custom weights found. Using default YOLOv8 Nano model (pretrained on COCO).")
-        
-        # Load the YOLO model
-        self.model = YOLO(self.model_path)
-        # Class index for 'person' in standard COCO dataset is 0
+            print("Custom crowd weights not found. Defaulting Crowd Mode to standard model.")
+            self.model_crowd = self.model_general
+
+        # Class index for 'person' is 0 in both COCO and the custom dataset
         self.person_class_id = 0
 
-    def detect(self, frame, confidence_threshold=0.3):
+    def detect(self, frame, confidence_threshold=None):
         """
         Runs person detection on a single frame.
         
         Args:
             frame: opencv BGR image matrix
-            confidence_threshold: float, confidence limit to consider a detection valid
+            confidence_threshold: float, confidence limit to consider a detection valid (defaults to self.confidence_threshold)
             
         Returns:
             list of dicts: [
@@ -47,8 +52,14 @@ class CrowdDetector:
         if frame is None:
             return []
             
-        # Run inference. verbose=False disables spamming console every frame
-        results = self.model(frame, verbose=False)
+        conf_val = confidence_threshold if confidence_threshold is not None else self.confidence_threshold
+        
+        # Select active model
+        active_model = self.model_general if self.model_type == "general" else self.model_crowd
+        
+        # Run inference with configuration parameters.
+        # iou=0.45 enforces Non-Maximum Suppression to prevent double overlapping boxes on the same person.
+        results = active_model(frame, imgsz=self.imgsz, conf=conf_val, iou=0.45, verbose=False)
         
         detections = []
         if len(results) > 0:
@@ -60,7 +71,7 @@ class CrowdDetector:
                 conf = float(box.conf[0].item())
                 
                 # Filter for person detections only
-                if cls_id == self.person_class_id and conf >= confidence_threshold:
+                if cls_id == self.person_class_id and conf >= conf_val:
                     xyxy = box.xyxy[0].cpu().numpy()
                     x1, y1, x2, y2 = map(int, xyxy)
                     

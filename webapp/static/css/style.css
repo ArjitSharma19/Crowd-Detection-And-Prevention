@@ -3,22 +3,29 @@
 
 :root {
     /* Backgrounds */
-    --bg-page: #0f172a;       /* Dark Navy */
-    --bg-card: #1e293b;       /* Slate 800 */
+    --bg-page: #0f172a;
+    /* Dark Navy */
+    --bg-card: #1e293b;
+    /* Slate 800 */
     --border-subtle: rgba(255, 255, 255, 0.08);
-    
+
     /* Text Colors */
-    --text-primary: #f8fafc;   /* White/light gray */
-    --text-muted: #94a3b8;     /* Muted gray */
-    
+    --text-primary: #f8fafc;
+    /* White/light gray */
+    --text-muted: #94a3b8;
+    /* Muted gray */
+
     /* Risk States Color Palette (Flat Colors) */
-    --color-safe: #10b981;      /* Emerald Green */
+    --color-safe: #10b981;
+    /* Emerald Green */
     --color-safe-bg: rgba(16, 185, 129, 0.15);
-    
-    --color-caution: #f59e0b;   /* Amber Yellow */
+
+    --color-caution: #f59e0b;
+    /* Amber Yellow */
     --color-caution-bg: rgba(245, 158, 11, 0.15);
-    
-    --color-danger: #ef4444;    /* Rose Red */
+
+    --color-danger: #ef4444;
+    /* Rose Red */
     --color-danger-bg: rgba(239, 68, 68, 0.15);
 }
 
@@ -122,9 +129,17 @@ body {
 }
 
 @keyframes simple-pulse {
-    0% { opacity: 0.4; }
-    50% { opacity: 1; }
-    100% { opacity: 0.4; }
+    0% {
+        opacity: 0.4;
+    }
+
+    50% {
+        opacity: 1;
+    }
+
+    100% {
+        opacity: 0.4;
+    }
 }
 
 /* CONTAINER */
@@ -182,7 +197,8 @@ body {
 .camera-feed-area {
     width: 100%;
     aspect-ratio: 16 / 10;
-    background-color: #0b0f19; /* Lighter/darker background */
+    background-color: #0b0f19;
+    /* Lighter/darker background */
     border-radius: 6px;
     position: relative;
     display: flex;
@@ -309,9 +325,17 @@ body {
     text-transform: capitalize;
 }
 
-.text-safe { color: var(--color-safe); }
-.text-caution { color: var(--color-caution); }
-.text-danger { color: var(--color-danger); }
+.text-safe {
+    color: var(--color-safe);
+}
+
+.text-caution {
+    color: var(--color-caution);
+}
+
+.text-danger {
+    color: var(--color-danger);
+}
 
 /* Stats Row */
 .stats-row {
@@ -347,9 +371,17 @@ body {
     transition: width 0.3s ease, background-color 0.3s ease;
 }
 
-.fill-safe { background-color: var(--color-safe); }
-.fill-caution { background-color: var(--color-caution); }
-.fill-danger { background-color: var(--color-danger); }
+.fill-safe {
+    background-color: var(--color-safe);
+}
+
+.fill-caution {
+    background-color: var(--color-caution);
+}
+
+.fill-danger {
+    background-color: var(--color-danger);
+}
 
 .capacity-helper {
     font-size: 11px;
@@ -359,7 +391,7 @@ body {
 /* 3. SAFETY THRESHOLDS CARD */
 .thresholds-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 24px;
 }
 
@@ -432,9 +464,11 @@ body {
 .log-list::-webkit-scrollbar {
     width: 4px;
 }
+
 .log-list::-webkit-scrollbar-track {
     background: transparent;
 }
+
 .log-list::-webkit-scrollbar-thumb {
     background: var(--border-subtle);
     border-radius: 2px;
@@ -460,9 +494,17 @@ body {
     flex-shrink: 0;
 }
 
-.log-dot.dot-safe { background-color: var(--color-safe); }
-.log-dot.dot-caution { background-color: var(--color-caution); }
-.log-dot.dot-danger { background-color: var(--color-danger); }
+.log-dot.dot-safe {
+    background-color: var(--color-safe);
+}
+
+.log-dot.dot-caution {
+    background-color: var(--color-caution);
+}
+
+.log-dot.dot-danger {
+    background-color: var(--color-danger);
+}
 
 .log-content {
     display: flex;

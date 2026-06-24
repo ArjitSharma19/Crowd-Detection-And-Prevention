@@ -69,29 +69,116 @@ def main():
         print("Please verify the folder path matches your local setup.")
         sys.exit(1)
 
-    # 2. Load/Initialize model
-    print(f"Initializing YOLO model '{MODEL_NAME}'...")
-    try:
-        model = YOLO(MODEL_NAME)
-    except Exception as e:
-        print(f"ERROR: Failed to initialize model {MODEL_NAME}: {e}")
-        sys.exit(1)
+    # 2. Resume vs Fresh Run Check
+    # Check whether a previous training run checkpoint 'last.pt' exists
+    possible_lasts = [
+        os.path.join(PROJECT, RUN_NAME, "weights", "last.pt"),
+        os.path.join(PROJECT, PROJECT, RUN_NAME, "weights", "last.pt"),
+        os.path.join("runs", "detect", RUN_NAME, "weights", "last.pt"),
+        os.path.join("runs", "detect", "runs", "detect", RUN_NAME, "weights", "last.pt")
+    ]
+    
+    last_pt_path = None
+    for path in possible_lasts:
+        if os.path.exists(path):
+            last_pt_path = path
+            break
+            
+    resume_training = False
+    if last_pt_path:
+        print("=" * 70)
+        print("                 EXISTING CHECKPOINT DETECTED")
+        print("=" * 70)
+        print(f"Found previous run checkpoint at: {last_pt_path}")
+        print("Options:")
+        print("  [R] Resume training from this checkpoint (continues from last saved epoch)")
+        print("  [F] Start fresh (renames the existing run directory to prevent overwriting)")
+        print("=" * 70)
+        
+        choice = ""
+        while choice not in ['r', 'f']:
+            try:
+                choice = input("Enter choice [R/F]: ").strip().lower()
+            except KeyboardInterrupt:
+                print("\nTraining aborted.")
+                sys.exit(0)
+                
+        if choice == 'r':
+            resume_training = True
+            # Print epoch details from checkpoint
+            try:
+                ckpt = torch.load(last_pt_path, map_location='cpu')
+                last_completed_epoch = ckpt.get('epoch', -1)
+                resuming_epoch = last_completed_epoch + 2
+                print(f"\nResuming training from Epoch {resuming_epoch} (after completed Epoch {last_completed_epoch + 1}).")
+            except Exception as e:
+                print(f"\nCould not parse epoch details from checkpoint: {e}. Resuming training...")
+        else:
+            # START FRESH: rename the existing run directory to avoid overwriting it
+            run_dir = os.path.dirname(os.path.dirname(last_pt_path))
+            counter = 1
+            new_run_dir = f"{run_dir}_old"
+            while os.path.exists(new_run_dir):
+                new_run_dir = f"{run_dir}_old_{counter}"
+                counter += 1
+                
+            print(f"\nRenaming existing run directory from '{run_dir}' to '{new_run_dir}'...")
+            try:
+                shutil.move(run_dir, new_run_dir)
+                print("Directory renamed successfully.")
+            except Exception as e:
+                print(f"CRITICAL ERROR renaming directory: {e}")
+                sys.exit(1)
+            last_pt_path = None
 
-    # 3. Train the model
+    # NOTE ON RESUMABILITY (Requirement 5):
+    # YOLOv11m saves the 'last.pt' checkpoint at the end of each completed epoch.
+    # To pause training safely, you can interrupt the process (Ctrl+C in terminal).
+    # Letting the current epoch finish before stopping is recommended, as interrupting
+    # mid-epoch loses the current in-progress epoch's work, but the previous completed
+    # epoch's last.pt remains safe.
+    print("\nNOTE ON RESUMABILITY:")
+    print("  YOLOv11m saves 'last.pt' at the end of each completed epoch.")
+    print("  To pause training safely, interrupt the process (Ctrl+C).")
+    print("  Interruption mid-epoch loses the current epoch's progress,")
+    print("  but the previous completed epoch's progress remains safe in last.pt.")
+    print("-" * 70)
+
+    # 3. Load/Initialize model
+    if resume_training and last_pt_path:
+        print(f"Loading checkpoint weights from '{last_pt_path}' to resume...")
+        try:
+            model = YOLO(last_pt_path)
+        except Exception as e:
+            print(f"ERROR loading checkpoint model: {e}")
+            sys.exit(1)
+    else:
+        print(f"Initializing fresh base model '{MODEL_NAME}'...")
+        try:
+            model = YOLO(MODEL_NAME)
+        except Exception as e:
+            print(f"ERROR: Failed to initialize model {MODEL_NAME}: {e}")
+            sys.exit(1)
+
+    # 4. Train the model
     print("\nStarting training loop...")
     try:
-        model.train(
-            data=DATA_YAML,
-            epochs=EPOCHS,
-            imgsz=IMGSZ,
-            batch=BATCH_SIZE,
-            device=DEVICE,
-            workers=WORKERS,
-            patience=PATIENCE,
-            project=PROJECT,
-            name=RUN_NAME,
-            exist_ok=True
-        )
+        if resume_training and last_pt_path:
+            # Ultralytics resume=True restores all original args (imgsz, batch, epochs, etc.) automatically.
+            model.train(resume=True)
+        else:
+            model.train(
+                data=DATA_YAML,
+                epochs=EPOCHS,
+                imgsz=IMGSZ,
+                batch=BATCH_SIZE,
+                device=DEVICE,
+                workers=WORKERS,
+                patience=PATIENCE,
+                project=PROJECT,
+                name=RUN_NAME,
+                exist_ok=True
+            )
         
         # 4. Copy best checkpoint and log completion
         best_weights_dest = os.path.join("models", "yolo11m_best.pt")
