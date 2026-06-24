@@ -137,3 +137,185 @@ class DensityEstimator:
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
                     
         return annotated_frame
+
+# =====================================================================
+# DUAL-MODEL SWITCHING & ZONE RISK HEURISTICS
+# =====================================================================
+
+def get_yolo_zone_counts(yolo_boxes, frame_shape, grid_rows=3, grid_cols=3):
+    """
+    Takes YOLO bounding boxes and assigns each detected person to a grid zone
+    based on the center point of their bounding box.
+    
+    This function outputs a 2D grid of per-zone counts in the EXACT same format/shape
+    as CSRNet's get_zone_densities() output. This allows the rest of the risk
+    assessment pipeline to treat both models' outputs interchangeably.
+    
+    Args:
+        yolo_boxes (list): A list of bounding boxes. Supports:
+                            - [{'bbox': [x1, y1, x2, y2]}] (output from detector.detect)
+                            - [[x1, y1, x2, y2]] (raw coordinates)
+        frame_shape (tuple): Shape of the camera frame (height, width, channels).
+        grid_rows (int): Number of rows in the spatial grid (default: 3).
+        grid_cols (int): Number of columns in the spatial grid (default: 3).
+        
+    Returns:
+        np.ndarray: A 2D numpy array of shape (grid_rows, grid_cols) containing
+                    the count of detected persons whose box centers fall into each cell.
+    """
+    h, w = frame_shape[:2]
+    grid = np.zeros((grid_rows, grid_cols), dtype=np.float32)
+    
+    # Grid cell dimensions
+    cell_h = h / grid_rows
+    cell_w = w / grid_cols
+    
+    for item in yolo_boxes:
+        # Check if the box is a dictionary (from detector.py) or a raw list/tuple
+        if isinstance(item, dict) and 'bbox' in item:
+            box = item['bbox']
+        else:
+            box = item
+            
+        x1, y1, x2, y2 = box
+        
+        # Calculate center point of the bounding box
+        cx = (x1 + x2) / 2.0
+        cy = (y1 + y2) / 2.0
+        
+        # Determine which cell the center point falls into
+        col = int(cx // cell_w)
+        row = int(cy // cell_h)
+        
+        # Clip coordinates to prevent index-out-of-bounds due to floating point precision
+        col = max(0, min(col, grid_cols - 1))
+        row = max(0, min(row, grid_rows - 1))
+        
+        grid[row, col] += 1.0
+        
+    return grid
+
+
+def should_use_csrnet(yolo_count, yolo_boxes, threshold=15, overlap_threshold=0.3):
+    """
+    Tunable heuristic to decide whether the system should switch from YOLO to CSRNet.
+    
+    Individual detection (YOLO) works best for low-density/sparse crowds. 
+    However, when crowds become dense, people block (occlude) each other, and YOLO's 
+    accuracy drops. Density estimation (CSRNet) is fully convolutional and estimates 
+    counts by scanning crowd patterns without needing to detect individual borders.
+    
+    We switch to CSRNet if:
+      - YOLO count is >= a critical threshold (e.g. 15 people).
+      - OR, if a significant ratio of YOLO boxes overlap heavily (high IoU), which indicates
+        severe crowd congestion and potential detection failures due to occlusion.
+        
+    Args:
+        yolo_count (int): Total count of persons currently detected by YOLO.
+        yolo_boxes (list): Bounding boxes detected by YOLO.
+        threshold (int): Count limit above which we automatically switch to CSRNet (default: 15).
+        overlap_threshold (float): IoU threshold (0.0 to 1.0) above which two boxes are 
+                                   considered to be overlapping/occluded (default: 0.3).
+                                   
+    Returns:
+        bool: True if CSRNet should be used, False if YOLO should be used.
+    """
+    # 1. Simple capacity check: if YOLO sees 15+ people, switch to density estimation
+    if yolo_count >= threshold:
+        return True
+        
+    # Extract coordinates to standard format [[x1, y1, x2, y2], ...]
+    boxes = []
+    for item in yolo_boxes:
+        if isinstance(item, dict) and 'bbox' in item:
+            boxes.append(item['bbox'])
+        else:
+            boxes.append(item)
+            
+    n_boxes = len(boxes)
+    if n_boxes <= 1:
+        return False  # Overlaps are impossible with 0 or 1 person
+        
+    # Track the indices of boxes that overlap with at least one other box
+    overlapping_indices = set()
+    
+    # Compare every box with every other box
+    for i in range(n_boxes):
+        for j in range(i + 1, n_boxes):
+            box1 = boxes[i]
+            box2 = boxes[j]
+            
+            # Unpack coordinates
+            x1_1, y1_1, x2_1, y2_1 = box1
+            x1_2, y1_2, x2_2, y2_2 = box2
+            
+            # Compute intersection box coordinates
+            xi1 = max(x1_1, x1_2)
+            yi1 = max(y1_1, y1_2)
+            xi2 = min(x2_1, x2_2)
+            yi2 = min(y2_1, y2_2)
+            
+            # Intersection area
+            inter_w = max(0, xi2 - xi1)
+            inter_h = max(0, yi2 - yi1)
+            inter_area = inter_w * inter_h
+            
+            # Union area
+            box1_area = (x2_1 - x1_1) * (y2_1 - y1_1)
+            box2_area = (x2_2 - x1_2) * (y2_2 - y1_2)
+            union_area = box1_area + box2_area - inter_area
+            
+            if union_area > 0:
+                iou = inter_area / union_area
+                # If IoU is high, these two detections are overlapping heavily
+                if iou > overlap_threshold:
+                    overlapping_indices.add(i)
+                    overlapping_indices.add(j)
+                    
+    # Calculate what percentage of our detections are overlapping
+    # TUNING TIP: If 20% or more of the crowd is overlapping, we assume detection is breaking down
+    overlap_ratio_threshold = 0.20
+    overlap_ratio = len(overlapping_indices) / n_boxes
+    
+    if overlap_ratio >= overlap_ratio_threshold:
+        return True
+        
+    return False
+
+
+def get_zone_risk_scores(zone_grid, thresholds):
+    """
+    Evaluates a per-zone grid of crowd counts/densities (from either YOLO or CSRNet)
+    and maps each cell to a risk score: "safe", "caution", or "danger".
+    
+    Args:
+        zone_grid (np.ndarray): 2D array of counts/densities per cell.
+        thresholds (dict): Threshold values for classifying risk levels. Expected format:
+                           {
+                               'caution': float, # Threshold count/density for caution level
+                               'danger': float   # Threshold count/density for danger level
+                           }
+                           
+    Returns:
+        np.ndarray: A 2D numpy array of strings containing "safe", "caution", or "danger"
+                    corresponding to the risk level of each grid zone.
+    """
+    rows, cols = zone_grid.shape
+    risk_grid = np.empty((rows, cols), dtype=object)
+    
+    # Fetch threshold values with safe fallback defaults
+    caution_limit = thresholds.get('caution', 3.0)
+    danger_limit = thresholds.get('danger', 6.0)
+    
+    for r in range(rows):
+        for c in range(cols):
+            val = zone_grid[r, c]
+            if val >= danger_limit:
+                risk_grid[r, c] = "danger"
+            elif val >= caution_limit:
+                risk_grid[r, c] = "caution"
+            else:
+                risk_grid[r, c] = "safe"
+                
+    return risk_grid
+
