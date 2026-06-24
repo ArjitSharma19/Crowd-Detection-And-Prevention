@@ -24,10 +24,10 @@ def main():
     IMGSZ = 960
     
     # PARAMETER EXPLANATION: batch
-    # We use batch=4 (reduced from the standard 8 or 16) to prevent Out-Of-Memory (OOM) 
+    # We use batch=2 (reduced from 4) to prevent Out-Of-Memory (OOM) 
     # errors on the 8GB RTX 4060 Laptop GPU. The 960px image size significantly increases 
     # the GPU memory footprint during forward and backward passes.
-    BATCH_SIZE = 4
+    BATCH_SIZE = 2
     
     # PARAMETER EXPLANATION: patience
     # We set patience=20 to stop training early if the validation loss plateaus for 
