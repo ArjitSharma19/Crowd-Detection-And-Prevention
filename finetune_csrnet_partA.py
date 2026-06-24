@@ -131,7 +131,7 @@ class ShanghaiTechPartADataset(Dataset):
         return img_tensor, density_tensor
 
 
-def print_progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=30, fill='█'):
+def print_progress_bar(iteration, total, prefix='', suffix='', decimals=1, length=30, fill='#'):
     """
     Prints a text-based progress bar to standard output to avoid tqdm dependency errors.
     """
@@ -163,15 +163,18 @@ def main():
         print("Please verify your DATASET_DIR path in the configuration section.")
         return
 
-    # Match files (e.g. IMG_1.jpg -> GT_IMG_1.mat)
+    # Match files (e.g. processed_IMG_1.jpg -> GT_IMG_1.mat)
     all_imgs = [os.path.join(img_dir, f) for f in sorted(os.listdir(img_dir)) if f.endswith('.jpg')]
     valid_pairs = []
     for img_path in all_imgs:
-        img_basename = os.path.splitext(os.path.basename(img_path))[0]  # e.g., 'IMG_1'
-        gt_filename = f"GT_{img_basename}.mat"
-        gt_path = os.path.join(gt_dir, gt_filename)
-        if os.path.exists(gt_path):
-            valid_pairs.append((img_path, gt_path))
+        img_name = os.path.basename(img_path)
+        match = re.search(r'IMG_\d+', img_name)
+        if match:
+            img_id = match.group(0)  # e.g., 'IMG_1'
+            gt_filename = f"GT_{img_id}.mat"
+            gt_path = os.path.join(gt_dir, gt_filename)
+            if os.path.exists(gt_path):
+                valid_pairs.append((img_path, gt_path))
 
     total_pairs = len(valid_pairs)
     print(f"Dataset summary: Found {total_pairs} valid image/GT pairs.")
