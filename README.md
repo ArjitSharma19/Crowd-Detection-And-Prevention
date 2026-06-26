@@ -138,3 +138,15 @@ The dashboard features an automated **Alert Manager** (`src/alerts.py`) that mon
 - **Max Capacity**: Threshold warning if total occupancy exceeds limit.
 - **High Local Density**: Triggers warning if any single grid cell count exceeds the local limit.
 - **Sustained Warning Alerting**: If warnings persist beyond the trigger delay (default `3` seconds), the status escalates to **CRITICAL**, appending incident details directly into the dashboard's live logs.
+
+
+1) Create python virtual environment
+python -m venv .venv
+2) Activate virtual environment
+.venv\Scripts\activate
+3) Install requirements
+pip install -r requirements.txt
+4) Run dashboard
+python main.py
+5) Open http://[IP_ADDRESS] in browser
+
