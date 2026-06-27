@@ -17,7 +17,13 @@ from src.detector import CrowdDetector
 from src.alerts import AlertManager
 from src.csrnet_model import CSRNet, load_csrnet_model
 from src.csrnet_inference import estimate_density, get_zone_densities, density_map_to_heatmap
-from src.density import get_yolo_zone_counts, should_use_csrnet, get_zone_risk_scores
+from src.density import (
+    get_yolo_zone_counts,
+    should_use_csrnet,
+    get_zone_risk_scores,
+    get_smoothed_model_decision,
+    get_smoothed_count
+)
 
 app = FastAPI(title="CrowdShield AI Backend")
 
@@ -30,9 +36,33 @@ TEMPLATES_DIR = os.path.join(BASE_DIR, "webapp", "templates")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
+# =====================================================================
+# EDITABLE VIDEO SOURCE CONFIGURATION
+# =====================================================================
+# Set to 0 to use your webcam, or a string path to a video file.
+# Example: VIDEO_SOURCE = r"C:\path\to\your\video.mp4"
+VIDEO_SOURCE = r"E:\pexels-timo-volz-5544073 (1080p).mp4"
+
+# Auto-resolve directory to video file if needed
+if isinstance(VIDEO_SOURCE, str) and os.path.isdir(VIDEO_SOURCE):
+    files = os.listdir(VIDEO_SOURCE)
+    video_files = [f for f in files if f.endswith(('.mp4', '.avi', '.mkv', '.mov'))]
+    if video_files:
+        dir_name = os.path.basename(os.path.normpath(VIDEO_SOURCE))
+        best_match = None
+        for vf in video_files:
+            if os.path.splitext(vf)[0] == dir_name or vf == dir_name:
+                best_match = vf
+                break
+        if not best_match:
+            best_match = video_files[0]
+        VIDEO_SOURCE = os.path.join(VIDEO_SOURCE, best_match)
+        print(f"FastAPI: Auto-resolved VIDEO_SOURCE directory to file: {VIDEO_SOURCE}")
+# =====================================================================
+
 # Initialize AI / CV Engines
 detector = CrowdDetector(imgsz=960, confidence_threshold=0.25)
-alert_manager = AlertManager(max_capacity=10, density_limit=5.0, trigger_delay_seconds=3.0)
+alert_manager = AlertManager(max_capacity=25, caution_at=70, density_limit=5.0, trigger_delay_seconds=20.0)
 
 # Initialize CSRNet Engine
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -70,6 +100,88 @@ def log_counts_to_csv(yolo_count, csrnet_count, model_selected):
     except Exception as e:
         print(f"Failed to write to CSV log: {e}")
 
+# Global configuration for frame skip/processing interval
+FRAME_PROCESSING_INTERVAL = 1  # Process every Nth frame (1 = every frame)
+
+# Global state tracking for per-zone alerts
+zone_states = {}  # key: (row, col), value: {'logged_tier': 'safe', 'pending_tier': None, 'start_time': None}
+
+# Global rolling histories for temporal smoothing
+model_decision_history = []
+count_history = []
+
+def check_zone_transitions(risk_per_zone, zone_grid):
+    """
+    Tracks per-zone risk level transitions over time.
+    Only logs an incident if a transition has been sustained for the duration of the alert delay.
+    """
+    global zone_states
+    
+    rows, cols = risk_per_zone.shape
+    now = time.time()
+    alert_delay = alert_manager.trigger_delay_seconds
+    local_limit = float(alert_manager.density_limit) if alert_manager.density_limit > 0 else 5.0
+    
+    for r in range(rows):
+        for c in range(cols):
+            key = (r, c)
+            if key not in zone_states:
+                zone_states[key] = {
+                    'logged_tier': 'safe',
+                    'pending_tier': None,
+                    'start_time': None
+                }
+                
+            state = zone_states[key]
+            measured_tier = risk_per_zone[r, c]  # "safe", "caution", or "danger"
+            logged_tier = state['logged_tier']
+            pending_tier = state['pending_tier']
+            
+            # If the measured tier is different from the officially logged tier
+            if measured_tier != logged_tier:
+                # If we are already tracking this transition
+                if pending_tier == measured_tier:
+                    elapsed = now - state['start_time']
+                    if elapsed >= alert_delay:
+                        # Transition sustained past alert delay! Log it and update logged_tier
+                        zone_num = r * cols + c + 1
+                        val = zone_grid[r, c]
+                        count_str = f"{int(val)}" if val % 1 == 0 else f"{val:.1f}"
+                        limit_str = f"{int(local_limit)}" if local_limit % 1 == 0 else f"{local_limit:.1f}"
+                        capacity_percentage = (val / local_limit) * 100
+                        pct_str = f"{int(capacity_percentage)}" if capacity_percentage % 1 == 0 else f"{capacity_percentage:.1f}"
+                        
+                        # Check transition direction
+                        if measured_tier == 'safe':
+                            status = 'NORMAL'
+                            msg = f"Zone {zone_num} returned to safe levels ({count_str} of {limit_str} people)"
+                        elif measured_tier == 'caution':
+                            status = 'WARNING'
+                            if logged_tier == 'danger':
+                                msg = f"Zone {zone_num} returned to caution levels ({count_str} of {limit_str} people) - approaching limit"
+                            else:
+                                msg = f"Zone {zone_num} reached {pct_str}% capacity ({count_str} of {limit_str} people) - approaching limit"
+                        elif measured_tier == 'danger':
+                            status = 'CRITICAL'
+                            msg = f"Zone {zone_num} reached {pct_str}% capacity ({count_str} of {limit_str} people) - over capacity, immediate attention needed"
+                            
+                        # Add to history
+                        alert_manager._add_to_history(status, msg)
+                        print(f"Zone Transition Alert: {msg}")
+                        
+                        # Update state
+                        state['logged_tier'] = measured_tier
+                        state['pending_tier'] = None
+                        state['start_time'] = None
+                else:
+                    # Start tracking new transition
+                    state['pending_tier'] = measured_tier
+                    state['start_time'] = now
+            else:
+                # Measured tier matches logged tier; cancel any pending transition
+                state['pending_tier'] = None
+                state['start_time'] = None
+
 def process_frame(frame):
     """
     Processes a single frame running both YOLO and CSRNet models.
@@ -90,6 +202,7 @@ def process_frame(frame):
             'boxes': list or None      # List of YOLO bounding boxes (only if YOLO was used)
         }
     """
+    global model_decision_history, count_history
     if frame is None:
         return {
             'count': 0.0,
@@ -108,19 +221,26 @@ def process_frame(frame):
     # 2. Run CSRNet estimation
     density_map, csrnet_count = estimate_density(csrnet_model, frame, device)
     
-    # 3. Determine which model output to trust
-    # Default switching parameters: count threshold 15, overlap IoU threshold 0.3
-    use_csrnet = should_use_csrnet(
+    # 3. Determine which model output to trust (using raw decision for CSV logging)
+    raw_use_csrnet = should_use_csrnet(
         yolo_count, 
         yolo_boxes, 
-        threshold=15,          # Tunable switching threshold
-        overlap_threshold=0.3  # Tunable IoU threshold
+        threshold=50, 
+        overlap_threshold=0.3
     )
+    raw_model_selected = "CSRNet" if raw_use_csrnet else "YOLO"
     
+    # Apply smoothed decision for actual model selection
+    use_csrnet = get_smoothed_model_decision(
+        yolo_count, 
+        yolo_boxes, 
+        model_decision_history, 
+        window_size=10
+    )
     model_selected = "CSRNet" if use_csrnet else "YOLO"
     
-    # 4. Log both counts to CSV
-    log_counts_to_csv(yolo_count, csrnet_count, model_selected)
+    # 4. Log both counts to CSV (using raw per-frame decision)
+    log_counts_to_csv(yolo_count, csrnet_count, raw_model_selected)
     
     # 5. Build selected model's zone grid (3x3 grid)
     grid_rows, grid_cols = 3, 3
@@ -135,16 +255,22 @@ def process_frame(frame):
         heatmap_image = None
         boxes_out = yolo_boxes
         
-    # 6. Calculate risk scores per zone
-    # Configurable thresholds: caution level 3, danger level 6.0
+    # Smooth the count display
+    smoothed_count = get_smoothed_count(selected_count, count_history, window_size=5)
+        
+    # 6. Calculate risk scores per zone based on local density limit
+    caution_pct = float(alert_manager.caution_at) if hasattr(alert_manager, 'caution_at') else 70.0
     risk_thresholds = {
-        'caution': 3.0,
-        'danger': 6.0
+        'caution': (caution_pct / 100.0) * alert_manager.density_limit,
+        'danger': alert_manager.density_limit
     }
     risk_per_zone = get_zone_risk_scores(zone_grid, risk_thresholds)
     
+    # Track zone transitions and add to alert history
+    check_zone_transitions(risk_per_zone, zone_grid)
+    
     return {
-        'count': selected_count,
+        'count': smoothed_count,
         'zone_grid': zone_grid,
         'risk_per_zone': risk_per_zone,
         'model_used': model_selected,
@@ -154,9 +280,9 @@ def process_frame(frame):
         'raw_density_map': density_map
     }
 
-def draw_grid_overlay(frame, grid):
+def draw_grid_overlay(frame, grid, risk_grid):
     """
-    Draws grid boundaries and count values on the frame.
+    Draws grid boundaries and count values on the frame, styled according to the dynamic risk grid.
     """
     annotated_frame = frame.copy()
     h, w = frame.shape[:2]
@@ -179,15 +305,16 @@ def draw_grid_overlay(frame, grid):
     for r in range(rows):
         for c in range(cols):
             val = grid[r, c]
+            risk = risk_grid[r, c]
             text = f"{val:.1f}" if val % 1 != 0 else f"{int(val)}"
             
             text_x = int(c * cell_w + cell_w / 2 - 10)
             text_y = int(r * cell_h + cell_h / 2 + 5)
             
-            # Color based on count thresholds (caution: 3, danger: 6)
-            if val >= 6.0:
+            # Color based on dynamic risk grid
+            if risk == 'danger':
                 color = (0, 0, 255) # Red for danger
-            elif val >= 3.0:
+            elif risk == 'caution':
                 color = (0, 255, 255) # Yellow for caution
             else:
                 color = (0, 255, 0) # Green for safe
@@ -210,7 +337,7 @@ metrics_cache = {
 
 class ConfigPayload(BaseModel):
     max_capacity: int
-    density_limit: float
+    caution_at: int
     trigger_delay: float
     confidence_threshold: float
     imgsz: int
@@ -230,7 +357,7 @@ async def get_config():
     """
     return {
         "max_capacity": alert_manager.max_capacity,
-        "density_limit": alert_manager.density_limit,
+        "caution_at": getattr(alert_manager, 'caution_at', 70),
         "trigger_delay": alert_manager.trigger_delay_seconds,
         "confidence_threshold": getattr(detector, 'confidence_threshold', 0.25),
         "imgsz": getattr(detector, 'imgsz', 960),
@@ -244,7 +371,30 @@ async def get_metrics():
     """
     # Fetch latest history log from manager
     metrics_cache["alert_history"] = alert_manager.get_history()
+    metrics_cache["caution_at"] = getattr(alert_manager, 'caution_at', 70)
     return metrics_cache
+
+@app.get("/api/current_status")
+async def get_current_status():
+    """
+    Exposes process_frame()'s full current output dict in JSON format.
+    """
+    # Fetch alert history to sync incident logs as well
+    alert_history = alert_manager.get_history()
+    return {
+        "count": metrics_cache.get("current_count", 0),
+        "peak_density": metrics_cache.get("peak_density", 0.0),
+        "status": metrics_cache.get("status", "NORMAL"),
+        "status_message": metrics_cache.get("status_message", ""),
+        "model_used": metrics_cache.get("model_used", "YOLO"),
+        "risk_per_zone": metrics_cache.get("risk_per_zone", []),
+        "boxes": metrics_cache.get("boxes", []),
+        "avg_confidence": metrics_cache.get("avg_confidence", "N/A"),
+        "zone_grid": metrics_cache.get("zone_grid", []),
+        "alert_history": alert_history,
+        "max_capacity": alert_manager.max_capacity,
+        "caution_at": getattr(alert_manager, 'caution_at', 70)
+    }
 
 @app.post("/api/config")
 async def update_config(payload: ConfigPayload):
@@ -252,7 +402,7 @@ async def update_config(payload: ConfigPayload):
     Updates warning limits dynamically.
     """
     alert_manager.max_capacity = payload.max_capacity
-    alert_manager.density_limit = payload.density_limit
+    alert_manager.caution_at = payload.caution_at
     alert_manager.trigger_delay_seconds = payload.trigger_delay
     detector.confidence_threshold = payload.confidence_threshold
     detector.imgsz = payload.imgsz
@@ -323,18 +473,33 @@ def frame_generator(mode: str):
     Attempts to read from the camera (index 0). If not available, streams synthetic simulation.
     """
     # Open camera stream
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(VIDEO_SOURCE)
     
     # Check if camera opened successfully
     use_simulation = not cap.isOpened()
     if use_simulation:
-        print("FastAPI: Webcam not detected. Falling back to synthetic crowd simulation stream.")
+        source_name = "Video File" if isinstance(VIDEO_SOURCE, str) else "Webcam"
+        print(f"FastAPI: {source_name} source not loaded. Falling back to synthetic crowd simulation stream.")
     else:
-        print("FastAPI: Webcam initialized successfully.")
-        # Set 720p HD resolution to improve sharpness, details, and camera autofocus
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        source_name = f"Video File ({VIDEO_SOURCE})" if isinstance(VIDEO_SOURCE, str) else "Webcam"
+        print(f"FastAPI: {source_name} source initialized successfully.")
+        # If it's a webcam, set resolution
+        if not isinstance(VIDEO_SOURCE, str):
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         
+    frame_counter = 0
+    last_result = {
+        'count': 0.0,
+        'zone_grid': np.zeros((3, 3), dtype=np.float32),
+        'risk_per_zone': np.full((3, 3), "safe", dtype=object),
+        'model_used': "YOLO",
+        'heatmap_image': None,
+        'boxes': [],
+        'raw_yolo_detections': [],
+        'raw_density_map': np.zeros((96, 128), dtype=np.float32)
+    }
+    
     try:
         while True:
             start_time = time.time()
@@ -344,33 +509,60 @@ def frame_generator(mode: str):
             else:
                 ret, frame = cap.read()
                 if not ret:
-                    # In case of webcam error mid-stream, fallback
-                    frame = generate_simulated_frame()
+                    # If it's a video file, loop it back to the beginning indefinitely
+                    if isinstance(VIDEO_SOURCE, str):
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        ret, frame = cap.read()
                     
-            # Run the dual-model processing pipeline on the current frame
-            result = process_frame(frame)
+                    # In case of webcam error mid-stream or empty video, fallback
+                    if not ret:
+                        frame = generate_simulated_frame()
+                    
+            # Run the dual-model processing pipeline on the current frame based on configurable interval
+            if frame_counter % FRAME_PROCESSING_INTERVAL == 0:
+                try:
+                    result = process_frame(frame)
+                    last_result = result
+                except Exception as e:
+                    print(f"FastAPI: Error during process_frame: {e}")
+                    result = last_result
+            else:
+                result = last_result
+                
+            frame_counter += 1
             
             current_count = result['count']
             # Peak density is defined as the maximum value inside any grid cell of the active model
             peak_density = float(np.max(result['zone_grid'])) if result['zone_grid'].size > 0 else 0.0
             
             # Apply Selected View Mode
-            processed_frame = frame
+            processed_frame = frame.copy()
+            model_used = result['model_used']
             
             if mode == "heatmap":
-                # Heatmap View: Always show the CSRNet density heatmap overlay
-                if result['heatmap_image'] is not None:
-                    processed_frame = result['heatmap_image']
+                # Heatmap View: Show the CSRNet density heatmap overlay if CSRNet is active
+                if model_used == "CSRNet":
+                    if result['heatmap_image'] is not None:
+                        processed_frame = result['heatmap_image']
+                    else:
+                        processed_frame = density_map_to_heatmap(result['raw_density_map'], frame, alpha=0.5)
                 else:
-                    # If YOLO was used for metrics but the user requested heatmap view, 
-                    # we generate the heatmap from CSRNet's density map since both models ran.
-                    processed_frame = density_map_to_heatmap(result['raw_density_map'], frame, alpha=0.5)
+                    # If YOLO is active, show the raw frame with a status label stating "Currently using YOLO (low density)"
+                    cv2.rectangle(processed_frame, (10, 10), (450, 45), (15, 23, 42), -1)
+                    cv2.putText(processed_frame, "Currently using YOLO (low density)", (20, 32), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (56, 189, 248), 2, cv2.LINE_AA)
             elif mode == "grid":
-                # Grid Cell View: Show the spatial grid overlay from the active model
-                processed_frame = draw_grid_overlay(frame, result['zone_grid'])
+                # Grid Cell View: Show the spatial grid overlay regardless of which model is active
+                processed_frame = draw_grid_overlay(frame, result['zone_grid'], result['risk_per_zone'])
             else:
-                # Raw Box View: Draw standard YOLO bounding boxes on the frame
-                processed_frame = detector.draw_detections(frame, result['raw_yolo_detections'])
+                # Raw Box View: Show the YOLO boxes if YOLO is active
+                if model_used == "YOLO":
+                    processed_frame = detector.draw_detections(frame, result['raw_yolo_detections'])
+                else:
+                    # If CSRNet is active, show the raw frame with a status label stating "Currently using CSRNet (high density)"
+                    cv2.rectangle(processed_frame, (10, 10), (450, 45), (15, 23, 42), -1)
+                    cv2.putText(processed_frame, "Currently using CSRNet (high density)", (20, 32), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (56, 189, 248), 2, cv2.LINE_AA)
                 
             # Update alerting status (alert_manager runs on the active model's decision output)
             alert_status = alert_manager.update(current_count, peak_density)
@@ -380,8 +572,20 @@ def frame_generator(mode: str):
             metrics_cache["peak_density"] = round(peak_density, 2)
             metrics_cache["status"] = alert_status["status"]
             metrics_cache["status_message"] = alert_status["message"]
-            metrics_cache["model_used"] = result['model_used']
+            metrics_cache["model_used"] = model_used
             metrics_cache["risk_per_zone"] = result['risk_per_zone'].tolist()
+            metrics_cache["zone_grid"] = result['zone_grid'].tolist()
+            metrics_cache["boxes"] = result['boxes'] if result['boxes'] is not None else []
+            metrics_cache["max_capacity"] = alert_manager.max_capacity
+            metrics_cache["caution_at"] = getattr(alert_manager, 'caution_at', 70)
+            
+            # Compute real YOLO detection average confidence
+            yolo_det = result['raw_yolo_detections']
+            if yolo_det:
+                avg_conf = np.mean([d['confidence'] for d in yolo_det]) * 100.0
+                metrics_cache["avg_confidence"] = f"{int(avg_conf)}%"
+            else:
+                metrics_cache["avg_confidence"] = "N/A"
             
             # Encode image to JPEG to transmit over HTTP
             ret, jpeg = cv2.imencode('.jpg', processed_frame)
