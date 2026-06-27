@@ -92,8 +92,8 @@ def main():
 
     # 3. Process each image URL in sequence
     for index, url in enumerate(IMAGE_URLS, start=1):
-        input_filename = f"test_input_{index}.jpg"
-        output_filename = f"test_heatmap_{index}.jpg"
+        input_filename = f"test_image/test_input_{index}.jpg"
+        output_filename = f"test_image/test_heatmap_{index}.jpg"
         
         print("\n" + "="*70)
         print(f"--- Image {index}: {url[:60]}... ---")
