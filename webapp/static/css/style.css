@@ -27,6 +27,10 @@
     --color-danger: #ef4444;
     /* Rose Red */
     --color-danger-bg: rgba(239, 68, 68, 0.15);
+
+    /* Model indicators */
+    --color-text-info: #38bdf8;
+    --color-text-csrnet: #a855f7;
 }
 
 * {
