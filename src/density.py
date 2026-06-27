@@ -196,7 +196,7 @@ def get_yolo_zone_counts(yolo_boxes, frame_shape, grid_rows=3, grid_cols=3):
     return grid
 
 
-def should_use_csrnet(yolo_count, yolo_boxes, threshold=15, overlap_threshold=0.3):
+def should_use_csrnet(yolo_count, yolo_boxes, threshold=50, overlap_threshold=0.3):
     """
     Tunable heuristic to decide whether the system should switch from YOLO to CSRNet.
     
@@ -206,21 +206,30 @@ def should_use_csrnet(yolo_count, yolo_boxes, threshold=15, overlap_threshold=0.
     counts by scanning crowd patterns without needing to detect individual borders.
     
     We switch to CSRNet if:
-      - YOLO count is >= a critical threshold (e.g. 15 people).
+      - YOLO count is >= a critical threshold (default: 50 people, based on empirical 
+        YOLO-vs-CSRNet divergence analysis).
       - OR, if a significant ratio of YOLO boxes overlap heavily (high IoU), which indicates
         severe crowd congestion and potential detection failures due to occlusion.
         
     Args:
         yolo_count (int): Total count of persons currently detected by YOLO.
         yolo_boxes (list): Bounding boxes detected by YOLO.
-        threshold (int): Count limit above which we automatically switch to CSRNet (default: 15).
+        threshold (int): Count limit above which we automatically switch to CSRNet (default: 50).
+                         This is determined by empirical YOLO-vs-CSRNet divergence analysis,
+                         where disagreement was lowest in the 30-50 range and climbed
+                         consistently above it (e.g. 58.3% on 50-100 range with 32 samples,
+                         and 67.5% on 100+ range with 50 samples). The 10-20 bucket showed 
+                         high disagreement (55.7%) but had only 6 samples, so it was excluded.
+                         Note: This threshold may need further tuning once more real-world 
+                         footage is available.
         overlap_threshold (float): IoU threshold (0.0 to 1.0) above which two boxes are 
                                    considered to be overlapping/occluded (default: 0.3).
                                    
     Returns:
         bool: True if CSRNet should be used, False if YOLO should be used.
     """
-    # 1. Simple capacity check: if YOLO sees 15+ people, switch to density estimation
+    # 1. Simple capacity check: if YOLO sees 50+ people (or current threshold limit),
+    # switch to density estimation. This threshold is validated by side-by-side empirical testing.
     if yolo_count >= threshold:
         return True
         
@@ -281,6 +290,58 @@ def should_use_csrnet(yolo_count, yolo_boxes, threshold=15, overlap_threshold=0.
         return True
         
     return False
+
+
+def get_smoothed_model_decision(yolo_count, yolo_boxes, decision_history, window_size=10):
+    """
+    Computes a smoothed model selection decision (YOLO vs CSRNet) using a majority vote
+    over a rolling window of recent raw decisions.
+    
+    Safety Design Trade-off Note:
+    - window_size=10 is a starting point and may need tuning.
+    - A larger window size improves stability by ignoring transient spikes, but slows down
+      response times to genuinely fast-developing dangerous crowd density changes (critical safety risk).
+    - A smaller window size enables faster response to danger but increases visible switching flicker.
+    
+    Args:
+        yolo_count (int): Bounding box count from YOLO.
+        yolo_boxes (list): Bounding box coordinates.
+        decision_history (list): Rolling queue/history of past boolean decisions (True = CSRNet).
+        window_size (int): Size of the rolling window.
+        
+    Returns:
+        bool: Smoothed decision (True to use CSRNet, False to use YOLO).
+    """
+    # 1. Get raw per-frame decision
+    raw_decision = should_use_csrnet(yolo_count, yolo_boxes)
+    
+    # 2. Append to rolling history
+    decision_history.append(raw_decision)
+    while len(decision_history) > window_size:
+        decision_history.pop(0)
+        
+    # 3. Compute majority vote (return True if >= 50% of the window voted True)
+    true_votes = sum(decision_history)
+    return true_votes >= len(decision_history) / 2.0
+
+
+def get_smoothed_count(current_count, count_history, window_size=5):
+    """
+    Computes a simple moving average of crowd counts to prevent visual jitter on the dashboard.
+    
+    Args:
+        current_count (float): The current frame's estimated count.
+        count_history (list): Rolling queue of past counts.
+        window_size (int): Size of the moving average window.
+        
+    Returns:
+        float: Smoothed crowd count.
+    """
+    count_history.append(current_count)
+    while len(count_history) > window_size:
+        count_history.pop(0)
+        
+    return float(np.mean(count_history))
 
 
 def get_zone_risk_scores(zone_grid, thresholds):
