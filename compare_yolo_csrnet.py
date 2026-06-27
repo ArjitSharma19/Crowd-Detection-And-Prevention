@@ -455,7 +455,7 @@ def main():
              f"Switch to CSRNet\n(Count >= {recommended_threshold})", 
              color='#2ca02c', fontweight='bold', fontsize=10)
     
-    plot_filename = "comparison_plot.png"
+    plot_filename = "test_image/comparison_plot.png"
     plt.tight_layout()
     plt.savefig(plot_filename, dpi=150)
     plt.close()
