@@ -16,7 +16,10 @@
                     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                 </svg>
             </div>
-            <h1 class="app-name">CrowdShield AI</h1>
+            <div style="display: flex; flex-direction: column;">
+                <h1 class="app-name" style="line-height: 1.2;">CrowdShield AI</h1>
+                <span class="label-muted" style="font-size: 10px; margin-bottom: 0;">Live monitoring</span>
+            </div>
         </div>
         <div class="header-right">
             <!-- Status Pill: color and text updated dynamically by JS -->
@@ -57,6 +60,13 @@
                          <div class="badge badge-bottom-left">
                              <span>Confidence: </span>
                              <span id="live-confidence-badge">94%</span>
+                         </div>
+
+                         <!-- Bottom-Right Badge: Active Model -->
+                         <div class="badge" style="bottom: 12px; right: 12px; display: flex; align-items: center; gap: 6px;">
+                             <span class="live-dot" id="model-dot" style="background-color: #38bdf8;"></span>
+                             <span>Model: </span>
+                             <span id="live-model-badge" style="font-weight: bold; color: #38bdf8;">YOLO</span>
                          </div>
                      </div>
  
@@ -115,40 +125,43 @@
                     <div class="threshold-column">
                         <div class="slider-header">
                             <label for="slider-max-people" class="label-primary">Max people allowed</label>
-                            <span id="val-max-people" class="slider-value">9</span>
+                            <span id="val-max-people" class="slider-value">25</span>
                         </div>
-                        <input type="range" id="slider-max-people" min="1" max="50" step="1" value="9" class="slider-input">
+                        <input type="range" id="slider-max-people" min="1" max="200" step="1" value="25" class="slider-input">
                         <div class="helper-text">Total people the space can safely hold</div>
                     </div>
 
-                    <!-- Crowding sensitivity -->
+                    <!-- Caution at -->
                     <div class="threshold-column">
                         <div class="slider-header">
-                            <label for="slider-sensitivity" class="label-primary">Crowding sensitivity</label>
-                            <span id="val-sensitivity" class="slider-value">5.0</span>
+                            <label for="slider-caution-at" class="label-primary">Caution at</label>
+                            <span id="val-caution-at" class="slider-value">70%</span>
                         </div>
-                        <input type="range" id="slider-sensitivity" min="1" max="10" step="0.1" value="5.0" class="slider-input">
-                        <div class="helper-text">How tightly packed before it's flagged</div>
+                        <input type="range" id="slider-caution-at" min="40" max="95" step="5" value="70" class="slider-input">
+                        <div class="helper-text">Capacity percentage that triggers a caution alert</div>
                     </div>
 
                     <!-- Alert delay -->
                     <div class="threshold-column">
                         <div class="slider-header">
                             <label for="slider-alert-delay" class="label-primary">Alert delay</label>
-                            <span id="val-alert-delay" class="slider-value">5s</span>
+                            <span id="val-alert-delay" class="slider-value">20s</span>
                         </div>
-                        <input type="range" id="slider-alert-delay" min="0" max="30" step="1" value="5" class="slider-input">
-                        <div class="helper-text">Wait time before sounding an alert</div>
+                        <input type="range" id="slider-alert-delay" min="0" max="60" step="5" value="20" class="slider-input">
+                        <div class="helper-text">How long a threshold must be crossed before alerting</div>
                     </div>
 
-                    <!-- Detection Confidence -->
+                    <!-- Visual Divider -->
+                    <div style="border-top: 1px solid var(--border-subtle); grid-column: 1 / -1; margin: 4px 0; padding: 0;"></div>
+
+                    <!-- Detection Sensitivity -->
                     <div class="threshold-column">
                         <div class="slider-header">
-                            <label for="slider-confidence" class="label-primary">Detection confidence</label>
-                            <span id="val-confidence" class="slider-value">0.20</span>
+                            <label for="slider-confidence" class="label-primary">Detection sensitivity</label>
+                            <span id="val-confidence" class="slider-value">0.25</span>
                         </div>
-                        <input type="range" id="slider-confidence" min="0.05" max="0.90" step="0.05" value="0.20" class="slider-input">
-                        <div class="helper-text">Lower values detect more (higher recall)</div>
+                        <input type="range" id="slider-confidence" min="0.10" max="0.90" step="0.05" value="0.25" class="slider-input">
+                        <div class="helper-text">Lower values detect more, but less certainly</div>
                     </div>
 
                     <!-- Detection Resolution -->
@@ -157,20 +170,21 @@
                             <label for="slider-resolution" class="label-primary">Detection resolution</label>
                             <span id="val-resolution" class="slider-value">960px</span>
                         </div>
-                        <input type="range" id="slider-resolution" min="640" max="1280" step="160" value="960" class="slider-input">
-                        <div class="helper-text">Higher values improve small object detection</div>
+                        <input type="range" id="slider-resolution" min="480" max="1280" step="160" value="960" class="slider-input">
+                        <div class="helper-text">Higher improves accuracy on distant or small people</div>
                     </div>
 
-                    <!-- Detector Mode Selection -->
+                    <!-- Camera Environment Selection -->
                     <div class="threshold-column">
                         <div class="slider-header">
-                            <label for="select-model-type" class="label-primary">Detector mode</label>
+                            <label for="select-model-type" class="label-primary">Camera environment</label>
                         </div>
                         <select id="select-model-type" class="slider-input" style="background: #0b0f19; color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: 4px; height: 32px; padding: 0 8px; outline: none; margin-top: 4px; cursor: pointer;">
-                            <option value="general">General Mode (Webcam / Single Person)</option>
-                            <option value="crowd">Dense Crowd Mode (Custom Weights)</option>
+                            <option value="general">General (webcam, single room)</option>
+                            <option value="venue">Venue (CCTV, wide area)</option>
+                            <option value="aerial">Aerial (drone, overhead)</option>
                         </select>
-                        <div class="helper-text">Switch model based on camera environment</div>
+                        <div class="helper-text">Switches detection model to match camera type</div>
                     </div>
 
                 </div>
@@ -180,7 +194,10 @@
         <!-- 4. INCIDENT LOG CARD -->
         <section class="full-width-section">
             <div class="card log-card">
-                <h2 class="card-title">Incident log</h2>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <h2 class="card-title" style="margin-bottom: 0;">Incident log</h2>
+                    <span class="label-muted" style="font-size: 11px;">Alerts only fire above threshold</span>
+                </div>
                 <div id="log-list" class="log-list">
                     <!-- Dynamic logs will be prepended here by JS -->
                 </div>
