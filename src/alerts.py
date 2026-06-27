@@ -2,27 +2,42 @@ import time
 from datetime import datetime
 
 class AlertManager:
-    def __init__(self, max_capacity=15, density_limit=5.0, trigger_delay_seconds=3.0):
+    def __init__(self, max_capacity=15, caution_at=70, density_limit=5.0, trigger_delay_seconds=3.0):
         """
         Initializes the Alert Manager.
         
         Args:
             max_capacity: int, max allowed total count of people in frame.
+            caution_at: int, capacity percentage that triggers caution level (default 70).
             density_limit: float, threshold for peak point density.
             trigger_delay_seconds: float, duration threshold before warning turns into critical alert.
         """
         self.max_capacity = max_capacity
+        self.caution_at = caution_at
         self.density_limit = density_limit
         self.trigger_delay_seconds = trigger_delay_seconds
         
         # State tracking
         self.current_status = "NORMAL"  # "NORMAL", "WARNING", "CRITICAL"
-        self.capacity_exceeded_since = None
-        self.density_exceeded_since = None
+        self.pending_status = None
+        self.status_transition_since = None
         
         # Log of recent alerts
         self.alert_history = []
         self.max_history_len = 50
+
+    def get_risk_tier(self, capacity_percentage, peak_density=0.0):
+        """
+        Determines the risk tier ("danger", "caution", "safe") for a given capacity percentage.
+        Ensure any capacity_percentage >= 100 always returns "danger", with no upper bound.
+        """
+        caution_density_limit = (self.caution_at / 100.0) * self.density_limit
+        if capacity_percentage >= 100 or peak_density >= self.density_limit:
+            return "danger"
+        elif capacity_percentage >= self.caution_at or peak_density >= caution_density_limit:
+            return "caution"
+        else:
+            return "safe"
 
     def update(self, current_count, peak_density):
         """
@@ -36,61 +51,48 @@ class AlertManager:
             }
         """
         now = time.time()
-        exceeded_capacity = current_count > self.max_capacity
-        exceeded_density = peak_density > self.density_limit
+        max_cap = float(self.max_capacity) if self.max_capacity > 0 else 1.0
+        capacity_percentage = (current_count / max_cap) * 100
         
-        # 1. Capacity state tracking
-        if exceeded_capacity:
-            if self.capacity_exceeded_since is None:
-                self.capacity_exceeded_since = now
+        # 1. Determine raw measured tier using helper
+        raw_tier_name = self.get_risk_tier(capacity_percentage, peak_density)
+        if raw_tier_name == "danger":
+            raw_tier = "CRITICAL"
+        elif raw_tier_name == "caution":
+            raw_tier = "WARNING"
         else:
-            self.capacity_exceeded_since = None
+            raw_tier = "NORMAL"
             
-        # 2. Density state tracking
-        if exceeded_density:
-            if self.density_exceeded_since is None:
-                self.density_exceeded_since = now
-        else:
-            self.density_exceeded_since = None
+        # 2. Update status instantaneously
+        self.current_status = raw_tier
+        self.pending_status = None
+        self.status_transition_since = None
             
-        # 3. Determine status
-        new_status = "NORMAL"
-        msg = "Crowd levels within safe parameters."
-        
-        # Calculate how long thresholds have been breached
-        cap_duration = (now - self.capacity_exceeded_since) if self.capacity_exceeded_since else 0.0
-        dens_duration = (now - self.density_exceeded_since) if self.density_exceeded_since else 0.0
-        
-        max_duration = max(cap_duration, dens_duration)
-        
-        if exceeded_capacity or exceeded_density:
-            if max_duration >= self.trigger_delay_seconds:
-                new_status = "CRITICAL"
-                reasons = []
-                if exceeded_capacity:
-                    reasons.append(f"Capacity exceeded ({current_count}/{self.max_capacity})")
-                if exceeded_density:
-                    reasons.append(f"High local density detected ({peak_density:.1f}/{self.density_limit})")
-                msg = f"CRITICAL: " + " & ".join(reasons) + " for over " + f"{int(max_duration)}s!"
-            else:
-                new_status = "WARNING"
-                msg = f"WARNING: Crowd limits approached. Verifying sustained state..."
-                
-        # 4. Check for state change
-        new_alert = False
-        if new_status != self.current_status:
-            self.current_status = new_status
-            if new_status != "NORMAL":
-                new_alert = True
-                self._add_to_history(new_status, msg)
-                
+        # 3. Formulate status message
+        if self.current_status == "NORMAL":
+            msg = "Crowd levels within safe parameters."
+        elif self.current_status == "WARNING":
+            reasons = []
+            if capacity_percentage >= self.caution_at:
+                reasons.append(f"capacity at {int(capacity_percentage)}%")
+            if peak_density >= (self.caution_at / 100.0) * self.density_limit:
+                reasons.append(f"high local density ({peak_density:.1f}/{self.density_limit})")
+            msg = "Warning — " + " & ".join(reasons)
+        else:  # CRITICAL
+            reasons = []
+            if capacity_percentage >= 100:
+                reasons.append(f"Capacity exceeded ({round(current_count)}/{self.max_capacity})")
+            if peak_density >= self.density_limit:
+                reasons.append(f"High local density ({peak_density:.1f}/{self.density_limit})")
+            msg = f"CRITICAL: " + " & ".join(reasons)
+            
         return {
             'status': self.current_status,
             'message': msg,
-            'new_alert': new_alert,
+            'new_alert': False,
             'durations': {
-                'capacity_seconds': cap_duration,
-                'density_seconds': dens_duration
+                'capacity_seconds': 0.0,
+                'density_seconds': 0.0
             }
         }
 
@@ -109,6 +111,6 @@ class AlertManager:
         
     def reset(self):
         self.current_status = "NORMAL"
-        self.capacity_exceeded_since = None
-        self.density_exceeded_since = None
+        self.pending_status = None
+        self.status_transition_since = None
         self.alert_history = []
