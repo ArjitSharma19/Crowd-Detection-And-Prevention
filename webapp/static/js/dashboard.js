@@ -7,9 +7,9 @@ let currentViewMode = 'raw';
 let currentCount = 0;
 
 const thresholds = {
-    maxPeople: 10,
-    sensitivity: 5.0,
-    alertDelay: 3,
+    maxPeople: 25,
+    cautionAt: 70,
+    alertDelay: 20,
     confidence: 0.25,
     resolution: 960,
     modelType: 'general'
@@ -30,12 +30,12 @@ const elLogList = document.getElementById('log-list');
 // Sliders and Value spans
 const sliderMaxPeople = document.getElementById('slider-max-people');
 const valMaxPeople = document.getElementById('val-max-people');
-const sliderSensitivity = document.getElementById('slider-sensitivity');
-const valSensitivity = document.getElementById('val-sensitivity');
+const sliderCautionAt = document.getElementById('slider-caution-at');
+const valCautionAt = document.getElementById('val-caution-at');
 const sliderAlertDelay = document.getElementById('slider-alert-delay');
 const valAlertDelay = document.getElementById('val-alert-delay');
 
-// New Sliders
+// Technical Sliders
 const sliderConfidence = document.getElementById('slider-confidence');
 const valConfidence = document.getElementById('val-confidence');
 const sliderResolution = document.getElementById('slider-resolution');
@@ -68,7 +68,7 @@ async function syncConfigFromBackend() {
         
         // Sync local thresholds state
         thresholds.maxPeople = config.max_capacity;
-        thresholds.sensitivity = config.density_limit;
+        thresholds.cautionAt = config.caution_at || 70;
         thresholds.alertDelay = Math.round(config.trigger_delay);
         thresholds.confidence = config.confidence_threshold;
         thresholds.resolution = config.imgsz;
@@ -79,9 +79,9 @@ async function syncConfigFromBackend() {
             sliderMaxPeople.value = thresholds.maxPeople;
             valMaxPeople.textContent = thresholds.maxPeople;
         }
-        if (sliderSensitivity) {
-            sliderSensitivity.value = thresholds.sensitivity;
-            valSensitivity.textContent = thresholds.sensitivity.toFixed(1);
+        if (sliderCautionAt) {
+            sliderCautionAt.value = thresholds.cautionAt;
+            valCautionAt.textContent = `${thresholds.cautionAt}%`;
         }
         if (sliderAlertDelay) {
             sliderAlertDelay.value = thresholds.alertDelay;
@@ -108,7 +108,7 @@ async function syncConfigFromBackend() {
 async function sendConfigUpdate() {
     const payload = {
         max_capacity: thresholds.maxPeople,
-        density_limit: thresholds.sensitivity,
+        caution_at: parseInt(thresholds.cautionAt),
         trigger_delay: parseFloat(thresholds.alertDelay),
         confidence_threshold: thresholds.confidence,
         imgsz: thresholds.resolution,
@@ -156,32 +156,53 @@ function setViewMode(mode) {
     }
 }
 
-// ----------------------------------------------------
-// CORE UI UPDATES
-// ----------------------------------------------------
+// Helper to calculate risk tier consistently
+function getRiskTier(count, limit, backendStatus) {
+    if (backendStatus === 'CRITICAL') {
+        return 'danger';
+    }
+    if (backendStatus === 'WARNING') {
+        return 'caution';
+    }
+    
+    const percentage = (count / limit) * 100;
+    if (percentage >= 100) {
+        return 'danger';
+    } else if (percentage >= thresholds.cautionAt) {
+        return 'caution';
+    }
+    return 'safe';
+}
+
 function updateCrowdState(count, limit, backendStatus, backendMessage) {
     currentCount = count;
+    const roundedCount = Math.round(count);
     
     // Update live metrics display
-    elPeopleNow.textContent = count;
+    elPeopleNow.textContent = roundedCount;
     elLimit.textContent = limit;
-    elLiveCountBadge.textContent = count;
+    elLiveCountBadge.textContent = roundedCount;
     
     // Calculate percentage capacity
     const percentage = Math.round((count / limit) * 100);
     elProgressBar.style.width = `${Math.min(percentage, 100)}%`;
-    elCapacityText.textContent = `${count} of ${limit} people · ${percentage}% full`;
+    elCapacityText.textContent = `${roundedCount} of ${limit} people · ${percentage}% full`;
     
     // Map backend status to risk state
-    let riskState = 'safe';
-    if (backendStatus === 'WARNING') {
-        riskState = 'caution';
-    } else if (backendStatus === 'CRITICAL') {
-        riskState = 'danger';
+    const riskState = getRiskTier(count, limit, backendStatus);
+    
+    // Determine message
+    let message = backendMessage;
+    if (riskState === 'danger' && (!message || message.includes("normal") || message.includes("Warning") || message.includes("safe"))) {
+        message = `CRITICAL: Capacity exceeded (${roundedCount}/${limit})`;
+    } else if (riskState === 'caution' && (!message || message.includes("normal") || message.includes("safe"))) {
+        message = `Warning — capacity at ${percentage}%`;
+    } else if (!message) {
+        message = "Crowd levels within safe parameters.";
     }
     
     // Apply styling and message
-    applyRiskStyling(riskState, backendMessage);
+    applyRiskStyling(riskState, message);
 }
 
 // Helper to update colors/badges across elements
@@ -232,20 +253,30 @@ function startMetricsPolling() {
             if (!response.ok) throw new Error('Failed to fetch metrics');
             const data = await response.json();
             
-            // Update UI count states using actual detector readings
-            updateCrowdState(data.current_count, thresholds.maxPeople, data.status, data.status_message);
+            // Update UI count states using actual detector readings and capacity limits from backend
+            updateCrowdState(data.current_count, data.max_capacity || thresholds.maxPeople, data.status, data.status_message);
             
-            // Set a dynamic confidence readout based on presence of people
-            if (data.current_count > 0) {
-                const seed = (data.current_count * 17) % 9; // pseudo-stable readout
-                const confVal = 88 + seed;
-                elConfidenceBadge.textContent = `${confVal}%`;
-            } else {
-                elConfidenceBadge.textContent = `N/A`;
+            // Set the real confidence readout from the active model
+            elConfidenceBadge.textContent = data.avg_confidence || 'N/A';
+            
+            // Update the Active Model indicator badge
+            const elLiveModelBadge = document.getElementById('live-model-badge');
+            const elModelDot = document.getElementById('model-dot');
+            if (elLiveModelBadge) {
+                elLiveModelBadge.textContent = data.model_used;
+                if (elModelDot) {
+                    if (data.model_used === 'YOLO') {
+                        elLiveModelBadge.style.color = '#38bdf8'; // sky blue
+                        elModelDot.style.backgroundColor = '#38bdf8';
+                    } else {
+                        elLiveModelBadge.style.color = '#a855f7'; // purple
+                        elModelDot.style.backgroundColor = '#a855f7';
+                    }
+                }
             }
             
             // Sync incident logs list from backend manager history
-            updateLogsList(data.alert_history);
+            updateLogsList(data.alert_history, data.caution_at || thresholds.cautionAt);
             
         } catch (error) {
             console.error('Error in metrics polling:', error);
@@ -253,7 +284,7 @@ function startMetricsPolling() {
     }, 500);
 }
 
-function updateLogsList(history) {
+function updateLogsList(history, cautionAt) {
     if (!history) return;
     
     // Clear list
@@ -261,8 +292,14 @@ function updateLogsList(history) {
     
     if (history.length === 0) {
         elLogList.innerHTML = `
-            <div class="log-entry" style="justify-content: center; padding: 20px 0; border: none; width: 100%;">
-                <span class="label-muted" style="text-align: center; display: block; width: 100%;">No recent incidents. System operating normally.</span>
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 0; border: none; width: 100%; gap: 12px;">
+                <div style="width: 48px; height: 48px; border-radius: 50%; background-color: rgba(16, 185, 129, 0.1); border: 1px dashed var(--color-safe); display: flex; align-items: center; justify-content: center; color: var(--color-safe);">
+                    <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                </div>
+                <span style="font-size: 14px; font-weight: 500; color: var(--text-primary);">No incidents recorded</span>
+                <span class="label-muted" style="text-align: center; margin-bottom: 0;">Alerts will appear here once capacity crosses ${cautionAt || 70}%</span>
             </div>
         `;
         return;
@@ -302,12 +339,14 @@ function setupSliders() {
     });
     sliderMaxPeople.addEventListener('change', sendConfigUpdate);
 
-    // Sensitivity slider
-    sliderSensitivity.addEventListener('input', (e) => {
-        thresholds.sensitivity = parseFloat(e.target.value);
-        valSensitivity.textContent = thresholds.sensitivity.toFixed(1);
-    });
-    sliderSensitivity.addEventListener('change', sendConfigUpdate);
+    // Caution at slider
+    if (sliderCautionAt) {
+        sliderCautionAt.addEventListener('input', (e) => {
+            thresholds.cautionAt = parseInt(e.target.value);
+            valCautionAt.textContent = `${thresholds.cautionAt}%`;
+        });
+        sliderCautionAt.addEventListener('change', sendConfigUpdate);
+    }
 
     // Alert delay slider
     sliderAlertDelay.addEventListener('input', (e) => {
