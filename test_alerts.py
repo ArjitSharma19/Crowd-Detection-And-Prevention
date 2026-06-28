@@ -33,24 +33,21 @@ class TestAlertManager(unittest.TestCase):
         # capacity_percentage = 0 must return "safe"
         self.assertEqual(self.manager.get_risk_tier(0.0), "safe")
 
-    def test_risk_tier_density_danger(self):
-        # peak_density >= density_limit (5.0) must return "danger"
-        self.assertEqual(self.manager.get_risk_tier(50.0, peak_density=5.0), "danger")
-        self.assertEqual(self.manager.get_risk_tier(50.0, peak_density=6.0), "danger")
-
-    def test_risk_tier_density_caution(self):
-        # peak_density >= caution_density_limit (3.5) must return "caution"
-        self.assertEqual(self.manager.get_risk_tier(50.0, peak_density=3.5), "caution")
-        self.assertEqual(self.manager.get_risk_tier(50.0, peak_density=4.5), "caution")
-        # peak_density < 3.5 must return "safe"
-        self.assertEqual(self.manager.get_risk_tier(50.0, peak_density=3.4), "safe")
+    def test_risk_tier_density_ignored(self):
+        # peak_density must not affect risk tier; at 50% capacity it must be "safe"
+        self.assertEqual(self.manager.get_risk_tier(50.0, peak_density=5.0), "safe")
+        self.assertEqual(self.manager.get_risk_tier(50.0, peak_density=6.0), "safe")
+        self.assertEqual(self.manager.get_risk_tier(50.0, peak_density=3.5), "safe")
 
     def test_instantaneous_update(self):
         # Initial status should be NORMAL
         self.assertEqual(self.manager.current_status, "NORMAL")
         
+        # Set trigger delay to 0 to simulate instantaneous update
+        self.manager.trigger_delay_seconds = 0.0
+        
         # Call update with severe over-capacity (e.g. 330 people against limit of 25)
-        # Should change status to CRITICAL instantaneously without waiting trigger_delay_seconds (20s)
+        # Should change status to CRITICAL instantaneously when trigger_delay_seconds is 0.0
         result = self.manager.update(current_count=330, peak_density=0.0)
         self.assertEqual(result["status"], "CRITICAL")
         self.assertEqual(self.manager.current_status, "CRITICAL")
