@@ -31,10 +31,9 @@ class AlertManager:
         Determines the risk tier ("danger", "caution", "safe") for a given capacity percentage.
         Ensure any capacity_percentage >= 100 always returns "danger", with no upper bound.
         """
-        caution_density_limit = (self.caution_at / 100.0) * self.density_limit
-        if capacity_percentage >= 100 or peak_density >= self.density_limit:
+        if capacity_percentage >= 100:
             return "danger"
-        elif capacity_percentage >= self.caution_at or peak_density >= caution_density_limit:
+        elif capacity_percentage >= self.caution_at:
             return "caution"
         else:
             return "safe"
@@ -63,28 +62,59 @@ class AlertManager:
         else:
             raw_tier = "NORMAL"
             
-        # 2. Update status instantaneously
-        self.current_status = raw_tier
-        self.pending_status = None
-        self.status_transition_since = None
-            
-        # 3. Formulate status message
+        # 2. Track state transition with trigger_delay_seconds
+        if raw_tier != self.current_status:
+            if self.trigger_delay_seconds <= 0.0:
+                # Transition immediately!
+                old_status = self.current_status
+                self.current_status = raw_tier
+                self.pending_status = None
+                self.status_transition_since = None
+                
+                # Formulate log message for history
+                if self.current_status == "WARNING":
+                    log_msg = f"Warning: Crowd limits approached (capacity reached {int(capacity_percentage)}%)"
+                elif self.current_status == "CRITICAL":
+                    log_msg = f"CRITICAL: capacity exceeded ({round(current_count)}/{self.max_capacity})"
+                else:
+                    log_msg = "Crowd levels returned to normal."
+                    
+                self._add_to_history(self.current_status, log_msg)
+            # If we are already tracking this transition
+            elif self.pending_status == raw_tier:
+                elapsed = now - self.status_transition_since
+                if elapsed >= self.trigger_delay_seconds:
+                    # Transition sustained! Log it and update status
+                    old_status = self.current_status
+                    self.current_status = raw_tier
+                    self.pending_status = None
+                    self.status_transition_since = None
+                    
+                    # Formulate log message for history
+                    if self.current_status == "WARNING":
+                        log_msg = f"Warning: Crowd limits approached (capacity reached {int(capacity_percentage)}%)"
+                    elif self.current_status == "CRITICAL":
+                        log_msg = f"CRITICAL: capacity exceeded ({round(current_count)}/{self.max_capacity})"
+                    else:
+                        log_msg = "Crowd levels returned to normal."
+                        
+                    self._add_to_history(self.current_status, log_msg)
+            else:
+                # Start tracking new transition
+                self.pending_status = raw_tier
+                self.status_transition_since = now
+        else:
+            # Measured tier matches current status; cancel pending transition
+            self.pending_status = None
+            self.status_transition_since = None
+
+        # 3. Formulate status message based on current status (which is delayed/sustained)
         if self.current_status == "NORMAL":
             msg = "Crowd levels within safe parameters."
         elif self.current_status == "WARNING":
-            reasons = []
-            if capacity_percentage >= self.caution_at:
-                reasons.append(f"capacity at {int(capacity_percentage)}%")
-            if peak_density >= (self.caution_at / 100.0) * self.density_limit:
-                reasons.append(f"high local density ({peak_density:.1f}/{self.density_limit})")
-            msg = "Warning — " + " & ".join(reasons)
+            msg = f"Warning — capacity at {int(capacity_percentage)}%"
         else:  # CRITICAL
-            reasons = []
-            if capacity_percentage >= 100:
-                reasons.append(f"Capacity exceeded ({round(current_count)}/{self.max_capacity})")
-            if peak_density >= self.density_limit:
-                reasons.append(f"High local density ({peak_density:.1f}/{self.density_limit})")
-            msg = f"CRITICAL: " + " & ".join(reasons)
+            msg = f"CRITICAL: Capacity exceeded ({round(current_count)}/{self.max_capacity})"
             
         return {
             'status': self.current_status,
