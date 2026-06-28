@@ -196,7 +196,7 @@ def get_yolo_zone_counts(yolo_boxes, frame_shape, grid_rows=3, grid_cols=3):
     return grid
 
 
-def should_use_csrnet(yolo_count, yolo_boxes, threshold=50, overlap_threshold=0.3):
+def should_use_csrnet(yolo_count, yolo_boxes, threshold=50, overlap_threshold=0.3, detection_mode="auto"):
     """
     Tunable heuristic to decide whether the system should switch from YOLO to CSRNet.
     
@@ -224,10 +224,16 @@ def should_use_csrnet(yolo_count, yolo_boxes, threshold=50, overlap_threshold=0.
                          footage is available.
         overlap_threshold (float): IoU threshold (0.0 to 1.0) above which two boxes are 
                                    considered to be overlapping/occluded (default: 0.3).
+        detection_mode (str): Bypasses the auto switching when not "auto" ("yolo", "sahi", "csrnet").
                                    
     Returns:
         bool: True if CSRNet should be used, False if YOLO should be used.
     """
+    if detection_mode == "csrnet":
+        return True
+    elif detection_mode in ("yolo", "sahi"):
+        return False
+
     # 1. Simple capacity check: if YOLO sees 50+ people (or current threshold limit),
     # switch to density estimation. This threshold is validated by side-by-side empirical testing.
     if yolo_count >= threshold:
@@ -292,7 +298,7 @@ def should_use_csrnet(yolo_count, yolo_boxes, threshold=50, overlap_threshold=0.
     return False
 
 
-def get_smoothed_model_decision(yolo_count, yolo_boxes, decision_history, window_size=10):
+def get_smoothed_model_decision(yolo_count, yolo_boxes, decision_history, window_size=10, detection_mode="auto"):
     """
     Computes a smoothed model selection decision (YOLO vs CSRNet) using a majority vote
     over a rolling window of recent raw decisions.
@@ -308,12 +314,18 @@ def get_smoothed_model_decision(yolo_count, yolo_boxes, decision_history, window
         yolo_boxes (list): Bounding box coordinates.
         decision_history (list): Rolling queue/history of past boolean decisions (True = CSRNet).
         window_size (int): Size of the rolling window.
+        detection_mode (str): The current detection mode selection.
         
     Returns:
         bool: Smoothed decision (True to use CSRNet, False to use YOLO).
     """
+    if detection_mode == "csrnet":
+        return True
+    elif detection_mode in ("yolo", "sahi"):
+        return False
+
     # 1. Get raw per-frame decision
-    raw_decision = should_use_csrnet(yolo_count, yolo_boxes)
+    raw_decision = should_use_csrnet(yolo_count, yolo_boxes, detection_mode=detection_mode)
     
     # 2. Append to rolling history
     decision_history.append(raw_decision)
