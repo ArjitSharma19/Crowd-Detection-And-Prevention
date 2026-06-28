@@ -24,6 +24,7 @@ from src.density import (
     get_smoothed_model_decision,
     get_smoothed_count
 )
+from src.sahi_detector import run_sahi_detection, SLICE_CONFIG
 
 app = FastAPI(title="CrowdShield AI Backend")
 
@@ -41,7 +42,7 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # =====================================================================
 # Set to 0 to use your webcam, or a string path to a video file.
 # Example: VIDEO_SOURCE = r"C:\path\to\your\video.mp4"
-VIDEO_SOURCE = r"E:\pexels-timo-volz-5544073 (1080p).mp4"
+VIDEO_SOURCE = r"E:\test_video.mp4"
 
 # Auto-resolve directory to video file if needed
 if isinstance(VIDEO_SOURCE, str) and os.path.isdir(VIDEO_SOURCE):
@@ -62,7 +63,7 @@ if isinstance(VIDEO_SOURCE, str) and os.path.isdir(VIDEO_SOURCE):
 
 # Initialize AI / CV Engines
 detector = CrowdDetector(imgsz=960, confidence_threshold=0.25)
-alert_manager = AlertManager(max_capacity=25, caution_at=70, density_limit=5.0, trigger_delay_seconds=20.0)
+alert_manager = AlertManager(max_capacity=1000, caution_at=70, density_limit=5.0, trigger_delay_seconds=20.0)
 
 # Initialize CSRNet Engine
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -103,6 +104,9 @@ def log_counts_to_csv(yolo_count, csrnet_count, model_selected):
 # Global configuration for frame skip/processing interval
 FRAME_PROCESSING_INTERVAL = 1  # Process every Nth frame (1 = every frame)
 
+# Global state tracking for manual override/model selection
+current_detection_mode = "auto"  # "auto", "yolo", "sahi", "csrnet"
+
 # Global state tracking for per-zone alerts
 zone_states = {}  # key: (row, col), value: {'logged_tier': 'safe', 'pending_tier': None, 'start_time': None}
 
@@ -110,96 +114,25 @@ zone_states = {}  # key: (row, col), value: {'logged_tier': 'safe', 'pending_tie
 model_decision_history = []
 count_history = []
 
-def check_zone_transitions(risk_per_zone, zone_grid):
+def process_frame(frame, detection_mode="auto"):
     """
-    Tracks per-zone risk level transitions over time.
-    Only logs an incident if a transition has been sustained for the duration of the alert delay.
-    """
-    global zone_states
-    
-    rows, cols = risk_per_zone.shape
-    now = time.time()
-    alert_delay = alert_manager.trigger_delay_seconds
-    local_limit = float(alert_manager.density_limit) if alert_manager.density_limit > 0 else 5.0
-    
-    for r in range(rows):
-        for c in range(cols):
-            key = (r, c)
-            if key not in zone_states:
-                zone_states[key] = {
-                    'logged_tier': 'safe',
-                    'pending_tier': None,
-                    'start_time': None
-                }
-                
-            state = zone_states[key]
-            measured_tier = risk_per_zone[r, c]  # "safe", "caution", or "danger"
-            logged_tier = state['logged_tier']
-            pending_tier = state['pending_tier']
-            
-            # If the measured tier is different from the officially logged tier
-            if measured_tier != logged_tier:
-                # If we are already tracking this transition
-                if pending_tier == measured_tier:
-                    elapsed = now - state['start_time']
-                    if elapsed >= alert_delay:
-                        # Transition sustained past alert delay! Log it and update logged_tier
-                        zone_num = r * cols + c + 1
-                        val = zone_grid[r, c]
-                        count_str = f"{int(val)}" if val % 1 == 0 else f"{val:.1f}"
-                        limit_str = f"{int(local_limit)}" if local_limit % 1 == 0 else f"{local_limit:.1f}"
-                        capacity_percentage = (val / local_limit) * 100
-                        pct_str = f"{int(capacity_percentage)}" if capacity_percentage % 1 == 0 else f"{capacity_percentage:.1f}"
-                        
-                        # Check transition direction
-                        if measured_tier == 'safe':
-                            status = 'NORMAL'
-                            msg = f"Zone {zone_num} returned to safe levels ({count_str} of {limit_str} people)"
-                        elif measured_tier == 'caution':
-                            status = 'WARNING'
-                            if logged_tier == 'danger':
-                                msg = f"Zone {zone_num} returned to caution levels ({count_str} of {limit_str} people) - approaching limit"
-                            else:
-                                msg = f"Zone {zone_num} reached {pct_str}% capacity ({count_str} of {limit_str} people) - approaching limit"
-                        elif measured_tier == 'danger':
-                            status = 'CRITICAL'
-                            msg = f"Zone {zone_num} reached {pct_str}% capacity ({count_str} of {limit_str} people) - over capacity, immediate attention needed"
-                            
-                        # Add to history
-                        alert_manager._add_to_history(status, msg)
-                        print(f"Zone Transition Alert: {msg}")
-                        
-                        # Update state
-                        state['logged_tier'] = measured_tier
-                        state['pending_tier'] = None
-                        state['start_time'] = None
-                else:
-                    # Start tracking new transition
-                    state['pending_tier'] = measured_tier
-                    state['start_time'] = now
-            else:
-                # Measured tier matches logged tier; cancel any pending transition
-                state['pending_tier'] = None
-                state['start_time'] = None
-
-def process_frame(frame):
-    """
-    Processes a single frame running both YOLO and CSRNet models.
+    Processes a single frame running YOLO, SAHI, or CSRNet models.
     Applies heuristic switching logic to decide which model to trust,
     logs comparative counts to a CSV file, calculates per-zone risk status,
     and returns a structured dict of results.
     
     Args:
         frame (np.ndarray): BGR OpenCV frame.
+        detection_mode (str): Force model type ("auto", "yolo", "csrnet").
         
     Returns:
         dict: {
             'count': float,           # Selected model's total crowd count
             'zone_grid': np.ndarray,   # Selected model's per-zone count grid (2D array)
             'risk_per_zone': np.ndarray, # 2D array of risk levels ("safe"/"caution"/"danger")
-            'model_used': str,         # "YOLO" or "CSRNet"
+            'model_used': str,         # "YOLO", "YOLO + SAHI", or "CSRNet"
             'heatmap_image': np.ndarray or None, # Heatmap overlay (only if CSRNet was used)
-            'boxes': list or None      # List of YOLO bounding boxes (only if YOLO was used)
+            'boxes': list or None      # List of YOLO bounding boxes (only if YOLO/SAHI was used)
         }
     """
     global model_decision_history, count_history
@@ -213,33 +146,81 @@ def process_frame(frame):
             'boxes': []
         }
         
-    # 1. Run YOLO detection
-    yolo_detections = detector.detect(frame)
-    yolo_count = len(yolo_detections)
-    yolo_boxes = [det['bbox'] for det in yolo_detections]
+    # Get camera environment config
+    env = getattr(detector, 'model_type', 'general')  # "general", "venue", or "aerial"
+    slice_params = SLICE_CONFIG.get(env, None)
     
-    # 2. Run CSRNet estimation
-    density_map, csrnet_count = estimate_density(csrnet_model, frame, device)
+    yolo_count = 0
+    yolo_boxes = []
+    yolo_detections = []
+    density_map = None
+    csrnet_count = 0.0
+    ran_sahi = False
     
-    # 3. Determine which model output to trust (using raw decision for CSV logging)
+    # 1. Run YOLO/SAHI first if Auto or forced YOLO is active.
+    # Note: Running YOLO+SAHI (or plain YOLO if camera_environment is "general") first ensures we get
+    # the best available YOLO-based count for this frame.
+    # CRITICAL: This means YOLO/SAHI runs even on frames that end up using CSRNet's result. This adds
+    # computational cost, which could be optimized later (e.g., a cheap quick density pre-check),
+    # but correctness of the switching decision comes first.
+    run_yolo = (detection_mode in ("yolo", "auto"))
+    if run_yolo:
+        if slice_params is not None:
+            yolo_path = os.path.join(BASE_DIR, "models", "best.pt")
+            if not os.path.exists(yolo_path):
+                yolo_path = os.path.join(BASE_DIR, "models", "yolo11m_best.pt")
+            if not os.path.exists(yolo_path):
+                yolo_path = "yolo11m.pt"
+            yolo_detections = run_sahi_detection(
+                model_path=yolo_path,
+                frame=frame,
+                slice_height=slice_params["slice_height"],
+                slice_width=slice_params["slice_width"],
+                overlap_ratio=slice_params["overlap_ratio"]
+            )
+            ran_sahi = True
+        else:
+            yolo_detections = detector.detect(frame)
+
+        yolo_count = len(yolo_detections)
+        yolo_boxes = [det['bbox'] for det in yolo_detections]
+        
+    # 2. Determine which model output to trust.
+    # CRITICAL: The switching decision must always use the most accurate available YOLO-based count
+    # for the current camera environment, never a plain unsliced count when SAHI would normally apply,
+    # otherwise dense scenes can be incorrectly judged as low-density and never hand off to CSRNet.
+    if detection_mode == "csrnet":
+        use_csrnet = True
+    elif detection_mode == "yolo":
+        use_csrnet = False
+    else: # auto
+        use_csrnet = get_smoothed_model_decision(
+            yolo_count, 
+            yolo_boxes, 
+            model_decision_history, 
+            window_size=10,
+            detection_mode=detection_mode
+        )
+        
+    if use_csrnet:
+        model_selected = "CSRNet"
+    else:
+        model_selected = "YOLO + SAHI" if ran_sahi else "YOLO"
+        
+    # 3. Run CSRNet estimation only if CSRNet is chosen/forced
+    run_csrnet = (detection_mode == "csrnet") or (detection_mode == "auto" and use_csrnet)
+    if run_csrnet:
+        density_map, csrnet_count = estimate_density(csrnet_model, frame, device)
+    
+    # 4. Log comparative metrics to CSV
     raw_use_csrnet = should_use_csrnet(
         yolo_count, 
         yolo_boxes, 
         threshold=50, 
-        overlap_threshold=0.3
+        overlap_threshold=0.3,
+        detection_mode=detection_mode
     )
-    raw_model_selected = "CSRNet" if raw_use_csrnet else "YOLO"
-    
-    # Apply smoothed decision for actual model selection
-    use_csrnet = get_smoothed_model_decision(
-        yolo_count, 
-        yolo_boxes, 
-        model_decision_history, 
-        window_size=10
-    )
-    model_selected = "CSRNet" if use_csrnet else "YOLO"
-    
-    # 4. Log both counts to CSV (using raw per-frame decision)
+    raw_model_selected = "CSRNet" if raw_use_csrnet else ("YOLO + SAHI" if ran_sahi else "YOLO")
     log_counts_to_csv(yolo_count, csrnet_count, raw_model_selected)
     
     # 5. Build selected model's zone grid (3x3 grid)
@@ -265,10 +246,6 @@ def process_frame(frame):
         'danger': alert_manager.density_limit
     }
     risk_per_zone = get_zone_risk_scores(zone_grid, risk_thresholds)
-    
-    # Track zone transitions and add to alert history
-    check_zone_transitions(risk_per_zone, zone_grid)
-    
     return {
         'count': smoothed_count,
         'zone_grid': zone_grid,
@@ -277,7 +254,7 @@ def process_frame(frame):
         'heatmap_image': heatmap_image,
         'boxes': boxes_out,
         'raw_yolo_detections': yolo_detections,
-        'raw_density_map': density_map
+        'raw_density_map': density_map if density_map is not None else np.zeros((96, 128), dtype=np.float32)
     }
 
 def draw_grid_overlay(frame, grid, risk_grid):
@@ -342,6 +319,7 @@ class ConfigPayload(BaseModel):
     confidence_threshold: float
     imgsz: int
     model_type: str
+    detection_mode: str = "auto"
 
 @app.get("/")
 async def get_dashboard(request: Request):
@@ -361,7 +339,8 @@ async def get_config():
         "trigger_delay": alert_manager.trigger_delay_seconds,
         "confidence_threshold": getattr(detector, 'confidence_threshold', 0.25),
         "imgsz": getattr(detector, 'imgsz', 960),
-        "model_type": getattr(detector, 'model_type', 'general')
+        "model_type": getattr(detector, 'model_type', 'general'),
+        "detection_mode": current_detection_mode
     }
 
 @app.get("/api/metrics")
@@ -401,12 +380,14 @@ async def update_config(payload: ConfigPayload):
     """
     Updates warning limits dynamically.
     """
+    global current_detection_mode
     alert_manager.max_capacity = payload.max_capacity
     alert_manager.caution_at = payload.caution_at
     alert_manager.trigger_delay_seconds = payload.trigger_delay
     detector.confidence_threshold = payload.confidence_threshold
     detector.imgsz = payload.imgsz
     detector.model_type = payload.model_type
+    current_detection_mode = payload.detection_mode
     return {"status": "success", "config": payload}
 
 # Simulated crowd coordinates for generator fallback
@@ -521,7 +502,7 @@ def frame_generator(mode: str):
             # Run the dual-model processing pipeline on the current frame based on configurable interval
             if frame_counter % FRAME_PROCESSING_INTERVAL == 0:
                 try:
-                    result = process_frame(frame)
+                    result = process_frame(frame, detection_mode=current_detection_mode)
                     last_result = result
                 except Exception as e:
                     print(f"FastAPI: Error during process_frame: {e}")
@@ -547,16 +528,16 @@ def frame_generator(mode: str):
                     else:
                         processed_frame = density_map_to_heatmap(result['raw_density_map'], frame, alpha=0.5)
                 else:
-                    # If YOLO is active, show the raw frame with a status label stating "Currently using YOLO (low density)"
+                    # If YOLO/SAHI is active, show the raw frame with a status label stating the active model
                     cv2.rectangle(processed_frame, (10, 10), (450, 45), (15, 23, 42), -1)
-                    cv2.putText(processed_frame, "Currently using YOLO (low density)", (20, 32), 
+                    cv2.putText(processed_frame, f"Currently using {model_used}", (20, 32), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (56, 189, 248), 2, cv2.LINE_AA)
             elif mode == "grid":
                 # Grid Cell View: Show the spatial grid overlay regardless of which model is active
                 processed_frame = draw_grid_overlay(frame, result['zone_grid'], result['risk_per_zone'])
             else:
-                # Raw Box View: Show the YOLO boxes if YOLO is active
-                if model_used == "YOLO":
+                # Raw Box View: Show the YOLO/SAHI boxes if active
+                if model_used in ("YOLO", "SAHI", "YOLO + SAHI"):
                     processed_frame = detector.draw_detections(frame, result['raw_yolo_detections'])
                 else:
                     # If CSRNet is active, show the raw frame with a status label stating "Currently using CSRNet (high density)"
@@ -573,13 +554,14 @@ def frame_generator(mode: str):
             metrics_cache["status"] = alert_status["status"]
             metrics_cache["status_message"] = alert_status["message"]
             metrics_cache["model_used"] = model_used
+            metrics_cache["detection_mode"] = current_detection_mode
             metrics_cache["risk_per_zone"] = result['risk_per_zone'].tolist()
             metrics_cache["zone_grid"] = result['zone_grid'].tolist()
             metrics_cache["boxes"] = result['boxes'] if result['boxes'] is not None else []
             metrics_cache["max_capacity"] = alert_manager.max_capacity
             metrics_cache["caution_at"] = getattr(alert_manager, 'caution_at', 70)
             
-            # Compute real YOLO detection average confidence
+            # Compute real YOLO/SAHI detection average confidence
             yolo_det = result['raw_yolo_detections']
             if yolo_det:
                 avg_conf = np.mean([d['confidence'] for d in yolo_det]) * 100.0
