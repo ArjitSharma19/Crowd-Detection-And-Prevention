@@ -76,6 +76,16 @@
                          <button id="btn-mode-heatmap" class="btn-toggle" onclick="setViewMode('heatmap')">Heatmap</button>
                          <button id="btn-mode-grid" class="btn-toggle" onclick="setViewMode('grid')">Grid cell</button>
                      </div>
+
+                     <!-- Detection-Mode Toggle Buttons -->
+                     <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
+                          <div class="label-muted" style="margin-bottom: 0;">Detection mode</div>
+                          <div class="view-mode-toggles" id="detection-mode-toggles">
+                              <button id="btn-det-auto" class="btn-toggle active" onclick="setDetectionMode('auto')">Auto</button>
+                              <button id="btn-det-yolo" class="btn-toggle" onclick="setDetectionMode('yolo')">YOLO</button>
+                              <button id="btn-det-csrnet" class="btn-toggle" onclick="setDetectionMode('csrnet')">CSRNet</button>
+                          </div>
+                     </div>
                 </div>
             </section>
 
@@ -125,9 +135,9 @@
                     <div class="threshold-column">
                         <div class="slider-header">
                             <label for="slider-max-people" class="label-primary">Max people allowed</label>
-                            <span id="val-max-people" class="slider-value">25</span>
+                            <span id="val-max-people" class="slider-value">1000</span>
                         </div>
-                        <input type="range" id="slider-max-people" min="1" max="200" step="1" value="25" class="slider-input">
+                        <input type="range" id="slider-max-people" min="1" max="1000" step="1" value="1000" class="slider-input">
                         <div class="helper-text">Total people the space can safely hold</div>
                     </div>
 

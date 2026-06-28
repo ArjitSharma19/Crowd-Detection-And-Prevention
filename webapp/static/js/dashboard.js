@@ -7,12 +7,13 @@ let currentViewMode = 'raw';
 let currentCount = 0;
 
 const thresholds = {
-    maxPeople: 25,
+    maxPeople: 1000,
     cautionAt: 70,
     alertDelay: 20,
     confidence: 0.25,
     resolution: 960,
-    modelType: 'general'
+    modelType: 'general',
+    detectionMode: 'auto'
 };
 
 // DOM Elements cache
@@ -73,6 +74,7 @@ async function syncConfigFromBackend() {
         thresholds.confidence = config.confidence_threshold;
         thresholds.resolution = config.imgsz;
         thresholds.modelType = config.model_type;
+        thresholds.detectionMode = config.detection_mode || 'auto';
         
         // Sync UI Sliders & Labels
         if (sliderMaxPeople) {
@@ -99,6 +101,19 @@ async function syncConfigFromBackend() {
             selectModelType.value = thresholds.modelType;
         }
         
+        // Sync UI Detection Mode buttons
+        const detButtons = ['btn-det-auto', 'btn-det-yolo', 'btn-det-csrnet'];
+        detButtons.forEach(id => {
+            const btn = document.getElementById(id);
+            if (btn) {
+                if (id.endsWith(thresholds.detectionMode)) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            }
+        });
+        
         console.log('Successfully synced initial config from backend:', config);
     } catch (error) {
         console.error('Error syncing config from backend:', error);
@@ -112,7 +127,8 @@ async function sendConfigUpdate() {
         trigger_delay: parseFloat(thresholds.alertDelay),
         confidence_threshold: thresholds.confidence,
         imgsz: thresholds.resolution,
-        model_type: thresholds.modelType
+        model_type: thresholds.modelType,
+        detection_mode: thresholds.detectionMode
     };
     
     try {
@@ -127,6 +143,27 @@ async function sendConfigUpdate() {
     } catch (err) {
         console.error('Error updating backend config:', err);
     }
+}
+
+function setDetectionMode(mode) {
+    thresholds.detectionMode = mode;
+    console.log(`Detection mode changed to: ${mode}`);
+    
+    // Update button styling
+    const detButtons = ['btn-det-auto', 'btn-det-yolo', 'btn-det-csrnet'];
+    detButtons.forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) {
+            if (id.endsWith(mode)) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        }
+    });
+    
+    // Send update to backend
+    sendConfigUpdate();
 }
 
 // ----------------------------------------------------
@@ -263,11 +300,15 @@ function startMetricsPolling() {
             const elLiveModelBadge = document.getElementById('live-model-badge');
             const elModelDot = document.getElementById('model-dot');
             if (elLiveModelBadge) {
-                elLiveModelBadge.textContent = data.model_used;
+                const modeLabel = data.detection_mode === 'auto' ? ' (auto)' : ' (manual)';
+                elLiveModelBadge.textContent = data.model_used + modeLabel;
                 if (elModelDot) {
                     if (data.model_used === 'YOLO') {
                         elLiveModelBadge.style.color = '#38bdf8'; // sky blue
                         elModelDot.style.backgroundColor = '#38bdf8';
+                    } else if (data.model_used === 'YOLO + SAHI' || data.model_used === 'SAHI') {
+                        elLiveModelBadge.style.color = '#10b981'; // emerald green
+                        elModelDot.style.backgroundColor = '#10b981';
                     } else {
                         elLiveModelBadge.style.color = '#a855f7'; // purple
                         elModelDot.style.backgroundColor = '#a855f7';
