@@ -243,7 +243,7 @@ def main():
     PATIENCE = 20
     
     DEVICE = 0       # Use GPU device 0
-    WORKERS = 0      # Set to 0 to avoid multi-processing deadlocks/leaks on Windows
+    WORKERS = 2      # Set to 2 for faster parallel dataloading on Windows
     PROJECT = "runs/detect"
     RUN_NAME = "train_yolo11m_960px"
     # =====================================================================
