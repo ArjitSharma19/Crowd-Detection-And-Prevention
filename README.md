@@ -103,7 +103,9 @@ To fine-tune a model on custom crowd/person datasets locally:
    python train.py
    ```
 3. **Advanced Training Features**:
-   - **Pause & Resume Support**: Safe training termination is built-in. If interrupted (Ctrl+C), relaunching the script detects the `last.pt` checkpoint and gives you the option to **Resume `[R]`** from the last completed epoch or **Start Fresh `[F]`**.
+   - **Automatic Subsampling & Merging**: Before training, the script automatically selects a subset of the night-vision dataset (customizable `TARGET_COUNT` at the top of `train.py`, defaulting to `800` images, randomized with a fixed seed `42` for reproducibility). It merges this subset with the daytime dataset, mapping class `5` ('person') to class `0` ('people') and discarding non-person bounding boxes to produce a clean, single-class dataset in `crowd_density_merged/`.
+   - **Correct Fine-Tuning Execution**: When launching the training, choose **Start Fresh `[F]`**. The script will automatically load your best daytime model weights (`models/yolo11m_best.pt`) as the starting point and begin training from Epoch 1 on the merged dataset.
+   - **Pause & Resume Support**: Safe training termination is built-in. If interrupted (Ctrl+C), relaunching the script detects the `last.pt` checkpoint and gives you the option to **Resume `[R]`** from the last completed epoch.
    - **OOM Safety**: High-resolution image size (`960px`) is used to resolve distant, small people in crowds, with a reduced batch size (`2`) configured to prevent Out-Of-Memory (OOM) errors on 8GB VRAM GPUs (like RTX 4060).
    - **Checkpoints**: Once training completes, the script automatically copies the best checkpoint weights into `models/yolo11m_best.pt`.
 
