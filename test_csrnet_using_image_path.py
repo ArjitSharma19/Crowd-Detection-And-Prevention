@@ -1,3 +1,10 @@
+"""
+CSRNet Single Image Inference and Density Mapping Test Runner.
+This script demonstrates how to load CSRNet model weights, execute feed-forward
+inference on a single image, divide the resulting density map into a 3x3 grid,
+and output a visual heatmap representation.
+"""
+
 import os
 import cv2
 import torch

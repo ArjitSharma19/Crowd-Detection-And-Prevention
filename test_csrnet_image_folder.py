@@ -1,3 +1,10 @@
+"""
+CSRNet Batch Folder Inference and Density Mapping Test Runner.
+This script scans a specified directory containing test images, performs
+density estimation on each image, generates heatmaps, and prints out a
+summary table of estimated counts for comparison.
+"""
+
 import os
 import cv2
 import torch

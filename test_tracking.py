@@ -1,3 +1,9 @@
+"""
+Test suite and visualization runner for crowd tracking, ByteTrack, and velocity statistics.
+Loads the YOLO tracking model to perform real-time detection on a video stream or camera feed.
+Includes a synthetic fallback generator to simulate crowd movements if no camera is connected.
+"""
+
 import cv2
 import time
 import os

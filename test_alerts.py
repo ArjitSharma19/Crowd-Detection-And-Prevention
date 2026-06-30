@@ -1,8 +1,18 @@
+"""
+Unit tests for the AlertManager class within the Crowd Detection & Prevention system.
+These tests verify risk tier evaluation (danger, caution, safe), capacity thresholds,
+and instantaneous status transitions under different configurations.
+"""
+
 import unittest
 import time
 from src.alerts import AlertManager
 
 class TestAlertManager(unittest.TestCase):
+    """
+    Test suite for AlertManager.
+    Ensures that capacity, density, and delays are handled correctly to trigger the right alert levels.
+    """
     def setUp(self):
         # Initialize AlertManager with standard limits matching mainapp config:
         # max_capacity=25, caution_at=70, density_limit=5.0, trigger_delay_seconds=20.0
