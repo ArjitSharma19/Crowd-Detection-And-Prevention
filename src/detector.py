@@ -18,7 +18,10 @@ class CrowdDetector:
         self.model_general = YOLO("yolo11m.pt")
 
         # Load custom fine-tuned crowd model
-        local_custom_path = os.path.join("models", "best.pt")
+        local_custom_path = os.path.join("models", "yolo11m_best.pt")
+        if not os.path.exists(local_custom_path):
+            local_custom_path = os.path.join("models", "best.pt")
+            
         if model_path and os.path.exists(model_path):
             print(f"Loading custom crowd weights from {model_path}")
             self.model_crowd = YOLO(model_path)
