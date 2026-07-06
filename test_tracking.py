@@ -16,7 +16,9 @@ from src.velocity import update_track_history, get_zone_velocity_stats
 # EDITABLE INPUT PATH CONFIGURATION
 # =====================================================================
 # Set to 0 to use webcam, or path to a video file
-INPUT_PATH = r"E:\test_video2.mp4"
+INPUT_PATH = r"E:\test_video.mp4"
+CONFIDENCE_THRESHOLD = 0.15          # Lower threshold (e.g. 0.10 - 0.20) to detect people in low light
+ENHANCE_LOW_LIGHT = True             # Apply CLAHE to boost contrast in dark areas
 # =====================================================================
 
 # Simulated crowd coordinates for generator fallback
@@ -144,7 +146,13 @@ def draw_overlays(frame, tracked_objects, history_dict, avg_speeds, dir_variance
 def main():
     print(f"Loading YOLO tracking model...")
     # Initialize detector / tracker
-    model = YOLO("yolo11m.pt")
+    model_path = os.path.join("models", "yolo11m_best.pt")
+    if not os.path.exists(model_path):
+        model_path = os.path.join("models", "best.pt")
+    if not os.path.exists(model_path):
+        model_path = "yolo11m.pt"
+    print(f"Loading YOLO tracking model from: {model_path} ...")
+    model = YOLO(model_path)
     
     # Initialize track history dictionary
     history_dict = {}
@@ -182,8 +190,19 @@ def main():
                     
         now = time.time()
         
+        # Apply CLAHE contrast enhancement for low light
+        if not use_simulation and ENHANCE_LOW_LIGHT:
+            lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            # ClipLimit sets contrast enhancement threshold; tileGridSize divides image into local zones
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+            cl = clahe.apply(l)
+            frame_to_process = cv2.cvtColor(cv2.merge((cl, a, b)), cv2.COLOR_LAB2BGR)
+        else:
+            frame_to_process = frame
+            
         # 1. Run ByteTrack
-        tracked_objects = track_frame(model, frame, imgsz=960, conf=0.25)
+        tracked_objects = track_frame(model, frame_to_process, imgsz=960, conf=CONFIDENCE_THRESHOLD)
         
         # 2. Update track history trajectories
         active_ids = set()
@@ -210,9 +229,9 @@ def main():
             grid_cols=3
         )
         
-        # 4. Render visualizations
+        # 4. Render visualizations on the enhanced frame (or raw frame if you prefer)
         output_frame = draw_overlays(
-            frame, 
+            frame_to_process, 
             tracked_objects, 
             history_dict, 
             avg_speeds, 
