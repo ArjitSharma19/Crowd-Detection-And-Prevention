@@ -67,7 +67,9 @@ alert_manager = AlertManager(max_capacity=1000, caution_at=70, density_limit=5.0
 
 # Initialize CSRNet Engine
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-weights_path = os.path.join(BASE_DIR, "models", "csrnet_shanghaitech.pth")
+weights_path = os.path.join(BASE_DIR, "models", "csrnet_partA_finetuned_best.pth")
+if not os.path.exists(weights_path):
+    weights_path = os.path.join(BASE_DIR, "models", "csrnet_shanghaitech.pth")
 
 if os.path.exists(weights_path):
     print(f"FastAPI: Loading pretrained CSRNet weights from {weights_path} on {device}")
@@ -78,7 +80,7 @@ if os.path.exists(weights_path):
         csrnet_model = CSRNet(load_weights=False).to(device)
         csrnet_model.eval()
 else:
-    print("FastAPI: CSRNet weights not found at 'models/csrnet_shanghaitech.pth'. Initializing default/ImageNet weights.")
+    print(f"FastAPI: CSRNet weights not found. Initializing default/ImageNet weights.")
     csrnet_model = CSRNet(load_weights=False).to(device)
     csrnet_model.eval()
 
@@ -166,9 +168,9 @@ def process_frame(frame, detection_mode="auto"):
     run_yolo = (detection_mode in ("yolo", "auto"))
     if run_yolo:
         if slice_params is not None:
-            yolo_path = os.path.join(BASE_DIR, "models", "best.pt")
+            yolo_path = os.path.join(BASE_DIR, "models", "yolo11m_best.pt")
             if not os.path.exists(yolo_path):
-                yolo_path = os.path.join(BASE_DIR, "models", "yolo11m_best.pt")
+                yolo_path = os.path.join(BASE_DIR, "models", "best.pt")
             if not os.path.exists(yolo_path):
                 yolo_path = "yolo11m.pt"
             yolo_detections = run_sahi_detection(
