@@ -19,7 +19,9 @@ from src.csrnet_inference import estimate_density, get_zone_densities, density_m
 # =====================================================================
 # Local folder containing test images
 IMAGE_FOLDER = "test_image"
-WEIGHTS_PATH = "models/csrnet_shanghaitech.pth"
+WEIGHTS_PATH = "models/csrnet_partA_finetuned_best.pth"
+if not os.path.exists(WEIGHTS_PATH):
+    WEIGHTS_PATH = "models/csrnet_shanghaitech.pth"
 # =====================================================================
 
 def main():
