@@ -42,7 +42,9 @@ INPUT_TYPE = "images"              # "images" or "video"
 FRAME_SAMPLE_INTERVAL = 10         # Process every Nth frame in video mode
 MAX_IMAGES_TO_PROCESS = 150        # Limit image count to keep analysis fast (None for all)
 YOLO_MODEL_PATH = "models/yolo11m_best.pt"
-CSRNET_MODEL_PATH = "models/csrnet_shanghaitech.pth"
+CSRNET_MODEL_PATH = "models/csrnet_partA_finetuned_best.pth"
+if not os.path.exists(CSRNET_MODEL_PATH):
+    CSRNET_MODEL_PATH = "models/csrnet_shanghaitech.pth"
 # =====================================================================
 
 # Append the project workspace root to the python module search path
