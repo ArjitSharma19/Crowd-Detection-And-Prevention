@@ -39,3 +39,8 @@ crowd counting dataset.v2i.yolov11/
 crowd counting dataset.v2i.yolov11.zip
 Night Vision Subsampled/
 crowd_density_merged/
+
+# JHU-CROWD++ Dataset
+data/jhu_crowd_v2.0/
+data/jhu_crowd_v2.0.zip
+
