@@ -129,13 +129,14 @@ class JHUCrowdDataset(Dataset):
     Loads image, parses ground truth txt annotations, resizes/crops,
     and dynamically generates geometry-adaptive Gaussian density maps.
     """
-    def __init__(self, images_dir, gt_dir, max_size=1024, filter_blur=False, is_train=False, crop_size=(512, 512)):
+    def __init__(self, images_dir, gt_dir, max_size=1024, filter_blur=False, is_train=False, crop_size=(512, 512), return_points=False):
         self.images_dir = images_dir
         self.gt_dir = gt_dir
         self.max_size = max_size
         self.filter_blur = filter_blur
         self.is_train = is_train
         self.crop_size = crop_size
+        self.return_points = return_points
         
         self.pairs = []
         if not os.path.exists(images_dir) or not os.path.exists(gt_dir):
@@ -227,6 +228,9 @@ class JHUCrowdDataset(Dataset):
         chw = np.transpose(normalized, (2, 0, 1))
         img_tensor = torch.from_numpy(chw)
         
+        if self.return_points:
+            return img_tensor, torch.from_numpy(points), len(points)
+            
         # Density map grid size is 1/8 of image size
         h_target, w_target = h // 8, w // 8
         
@@ -297,5 +301,7 @@ class ShanghaiTechDataset(Dataset):
         h_target, w_target = h // 8, w // 8
         density_map = generate_density_map_adaptive(points, (h, w), target_shape=(h_target, w_target))
         density_tensor = torch.from_numpy(density_map).unsqueeze(0)
+        
+        return img_tensor, density_tensor
         
         return img_tensor, density_tensor
