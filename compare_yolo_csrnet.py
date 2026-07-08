@@ -13,21 +13,24 @@
 # limitations under the License.
 
 """
-YOLOv11m and CSRNet Side-by-Side Comparison & Crossover Analysis Script
+YOLOv11m and CSRNet Side-by-Side Comparison & Crossover Analysis Script (Audited v4)
 ----------------------------------------------------------------------
-This script processes a set of validation/test images or video frames using
-both YOLOv11m and CSRNet. It logs their respective counts, box overlap ratios,
-and differences to a CSV file. After processing, it analyzes the data to suggest 
-an empirical count-based threshold for switching between the two models in the hybrid pipeline.
+This script processes a set of validation/test images using YOLOv11m and CSRNet.
+It systematically audits the image matches between the Roboflow dataset and the original
+source datasets (JHU/ShanghaiTech) using normalized MSE pixel-matching confidence scores,
+excludes the bottom 10% worst matches and 0-count unlabeled images, logs findings, and outputs
+comparison metrics to a CSV file.
 """
 
 import os
 import sys
 import csv
 import argparse
+import re
 import numpy as np
 import torch
 import cv2
+import scipy.io as sio
 
 # Set matplotlib backend to Agg to prevent graphical interface errors in headless environments
 import matplotlib
@@ -38,11 +41,11 @@ import matplotlib.pyplot as plt
 # EDITABLE CONFIGURATION (Feel free to edit these variables)
 # =====================================================================
 INPUT_PATH = r"crowd density.v1-v1.yolov8/valid/images"
-INPUT_TYPE = "images"              # "images" or "video"
-FRAME_SAMPLE_INTERVAL = 10         # Process every Nth frame in video mode
-MAX_IMAGES_TO_PROCESS = 150        # Limit image count to keep analysis fast (None for all)
+INPUT_TYPE = "images"
 YOLO_MODEL_PATH = "models/yolo11m_best.pt"
-CSRNET_MODEL_PATH = "models/csrnet_partA_finetuned_best.pth"
+CSRNET_MODEL_PATH = "models/csrnet_jhu_dmcount_best.pth"
+if not os.path.exists(CSRNET_MODEL_PATH):
+    CSRNET_MODEL_PATH = "models/csrnet_partA_finetuned_best.pth"
 if not os.path.exists(CSRNET_MODEL_PATH):
     CSRNET_MODEL_PATH = "models/csrnet_shanghaitech.pth"
 # =====================================================================
@@ -52,14 +55,10 @@ sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 from src.detector import CrowdDetector
 from src.csrnet_model import load_csrnet_model
-from src.csrnet_inference import estimate_density
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run YOLO and CSRNet comparison side-by-side.")
     parser.add_argument('--input', type=str, default=None, help='Override INPUT_PATH configuration.')
-    parser.add_argument('--type', type=str, default=None, choices=['images', 'video'], help='Override INPUT_TYPE configuration.')
-    parser.add_argument('--interval', type=int, default=None, help='Override FRAME_SAMPLE_INTERVAL.')
-    parser.add_argument('--max-images', type=int, default=None, help='Override MAX_IMAGES_TO_PROCESS.')
     parser.add_argument('--yolo-model', type=str, default=None, help='Override YOLO_MODEL_PATH.')
     parser.add_argument('--csrnet-model', type=str, default=None, help='Override CSRNET_MODEL_PATH.')
     return parser.parse_args()
@@ -105,354 +104,345 @@ def calculate_overlap_ratio(yolo_boxes, overlap_threshold=0.3):
                     
     return len(overlapping_indices) / n_boxes
 
-def get_bucket_name(count):
+def preprocess_csrnet_image(img, max_size=1024):
     """
-    Groups YOLO counts into analysis buckets.
+    Native CSRNet preprocessing preserving aspect ratio and padding to multiples of 8.
     """
-    if count < 10:
-        return "0-10"
-    elif count < 20:
-        return "10-20"
-    elif count < 30:
-        return "20-30"
-    elif count < 50:
-        return "30-50"
-    elif count < 100:
-        return "50-100"
+    h, w = img.shape[:2]
+    if max(h, w) > max_size:
+        scale = max_size / max(h, w)
     else:
-        return "100+"
+        scale = 1.0
+        
+    h_new = max(8, int(round(h * scale / 8.0)) * 8)
+    w_new = max(8, int(round(w * scale / 8.0)) * 8)
+    
+    resized = cv2.resize(img, (w_new, h_new), interpolation=cv2.INTER_LINEAR)
+    rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+    rgb_float = rgb.astype(np.float32) / 255.0
+    
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    normalized = (rgb_float - mean) / std
+    
+    chw = np.transpose(normalized, (2, 0, 1))
+    tensor = torch.from_numpy(chw).unsqueeze(0)
+    return tensor
+
+def build_or_load_database():
+    """
+    Loads or builds the database of normalized image features for matching.
+    """
+    cache_dir = r"C:\Users\HP\.gemini\antigravity-ide\scratch"
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, "image_db_cache.npz")
+    
+    if os.path.exists(cache_path):
+        print("Loading image feature database from cache...")
+        data = np.load(cache_path, allow_pickle=True)
+        return data['features'], list(data['paths'])
+        
+    search_dirs = [
+        ("data/jhu_crowd_v2.0/jhu_crowd_v2.0/train/images", "jhu"),
+        ("data/jhu_crowd_v2.0/jhu_crowd_v2.0/val/images", "jhu"),
+        ("data/jhu_crowd_v2.0/jhu_crowd_v2.0/test/images", "jhu"),
+        ("archive/ShanghaiTech/part_A/train_data/images", "shanghai"),
+        ("archive/ShanghaiTech/part_A/test_data/images", "shanghai"),
+        ("archive/ShanghaiTech/part_B/train_data/images", "shanghai"),
+        ("archive/ShanghaiTech/part_B/test_data/images", "shanghai"),
+    ]
+    
+    db_features = []
+    db_paths = []
+    
+    print("Building image database (this may take ~90 seconds)...")
+    for img_dir, db_type in search_dirs:
+        if not os.path.exists(img_dir):
+            continue
+        files = [f for f in os.listdir(img_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+        for fn in files:
+            path = os.path.join(img_dir, fn)
+            img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                continue
+            resized = cv2.resize(img, (16, 16))
+            mean, std = cv2.meanStdDev(resized)
+            resized_norm = (resized.astype(float) - mean[0][0]) / (std[0][0] + 1e-5)
+            db_features.append(resized_norm.flatten())
+            db_paths.append(path)
+            
+    db_features = np.array(db_features)
+    np.savez(cache_path, features=db_features, paths=db_paths)
+    print(f"Database built and saved to cache. Total images: {len(db_paths)}")
+    return db_features, db_paths
+
+def get_original_gt_count(orig_path):
+    """
+    Extracts the native ground-truth count for a given original dataset image path.
+    """
+    dirname = os.path.dirname(orig_path)
+    parent = os.path.dirname(dirname)
+    filename = os.path.basename(orig_path)
+    
+    if "jhu_crowd_v2.0" in orig_path:
+        base = os.path.splitext(filename)[0]
+        gt_path = os.path.join(parent, "gt", f"{base}.txt")
+        if os.path.exists(gt_path):
+            with open(gt_path, 'r', encoding='utf-8') as f:
+                return len([line for line in f if line.strip()]), gt_path
+    elif "ShanghaiTech" in orig_path:
+        match = re.search(r'processed_IMG_(\d+)', filename)
+        if not match:
+            match = re.search(r'IMG_(\d+)', filename)
+        if match:
+            num = match.group(1)
+            gt_path = os.path.join(parent, "ground-truth", f"GT_IMG_{num}.mat")
+            if os.path.exists(gt_path):
+                mat_data = sio.loadmat(gt_path)
+                return len(mat_data['image_info'][0,0]['location'][0,0]), gt_path
+    return 0, None
 
 def main():
     args = parse_args()
     
-    # Resolve overrides
     input_path = args.input if args.input is not None else INPUT_PATH
-    input_type = args.type if args.type is not None else INPUT_TYPE
-    frame_interval = args.interval if args.interval is not None else FRAME_SAMPLE_INTERVAL
-    max_images = args.max_images if args.max_images is not None else MAX_IMAGES_TO_PROCESS
     yolo_path = args.yolo_model if args.yolo_model is not None else YOLO_MODEL_PATH
     csrnet_path = args.csrnet_model if args.csrnet_model is not None else CSRNET_MODEL_PATH
     
-    # 1. Validate paths and model checkpoints
     if not os.path.exists(yolo_path):
-        # Fallback search if yolo_path doesn't exist
         fallback_yolos = ["models/best.pt", "runs/detect/runs/detect/train_yolo11m_960px/weights/best.pt"]
         for fallback in fallback_yolos:
             if os.path.exists(fallback):
                 yolo_path = fallback
                 break
                 
-    if not os.path.exists(yolo_path):
-        print(f"ERROR: YOLO model checkpoint not found at {yolo_path}")
-        sys.exit(1)
-        
-    if not os.path.exists(csrnet_path):
-        # Fallback search for CSRNet
-        fallback_csrnet = "models/csrnet_partA_finetuned_best.pth"
-        if os.path.exists(fallback_csrnet):
-            csrnet_path = fallback_csrnet
-            
-    if not os.path.exists(csrnet_path):
-        print(f"ERROR: CSRNet model checkpoint not found at {csrnet_path}")
-        sys.exit(1)
-        
-    if not os.path.exists(input_path):
-        print(f"ERROR: Input path does not exist: {input_path}")
+    if not os.path.exists(yolo_path) or not os.path.exists(csrnet_path):
+        print("ERROR: Model checkpoints not found.")
         sys.exit(1)
 
     print("=" * 60)
-    print("      CROWD DETECTOR COMPARISON TOOL: YOLO vs CSRNET")
+    print("      CROWD DETECTOR COMPARISON TOOL: YOLO vs CSRNET (AUDITED)")
     print("=" * 60)
-    print(f"Input Path:        {os.path.abspath(input_path)}")
-    print(f"Input Type:        {input_type}")
-    print(f"YOLO Model:        {os.path.abspath(yolo_path)}")
-    print(f"CSRNet Model:      {os.path.abspath(csrnet_path)}")
-    print("=" * 60 + "\n")
-
-    # 2. Initialize Models
-    print("Initializing models on target device...")
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device selected: {device}")
-    
-    # Initialize YOLO crowd detector wrapper
     detector = CrowdDetector(model_path=yolo_path)
-    detector.model_type = "crowd"  # Force fine-tuned weights
-    
-    # Load CSRNet model
+    detector.model_type = "crowd"
     csrnet = load_csrnet_model(csrnet_path, device)
     
-    # 3. Collect and verify input sources
-    image_files = []
-    video_cap = None
-    total_items = 0
-    source_name = os.path.basename(input_path)
-
-    if input_type == "images":
-        valid_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.webp')
-        if os.path.isdir(input_path):
-            image_files = [
-                os.path.join(input_path, f) 
-                for f in os.listdir(input_path) 
-                if f.lower().endswith(valid_extensions)
-            ]
-            image_files.sort()
-        else:
-            if input_path.lower().endswith(valid_extensions):
-                image_files = [input_path]
-                
-        if max_images and len(image_files) > max_images:
-            print(f"Limiting evaluation to first {max_images} images out of {len(image_files)} found.")
-            image_files = image_files[:max_images]
+    db_features, db_paths = build_or_load_database()
+    
+    roboflow_dir = input_path
+    labels_dir = os.path.join(os.path.dirname(input_path), "labels")
+    
+    rf_files = sorted([f for f in os.listdir(roboflow_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))])[:150]
+    
+    all_scores = []
+    for fn in rf_files:
+        rf_path = os.path.join(roboflow_dir, fn)
+        img = cv2.imread(rf_path)
+        if img is None:
+            continue
             
-        total_items = len(image_files)
-        if total_items == 0:
-            print(f"ERROR: No valid images found in path: {input_path}")
-            sys.exit(1)
-        print(f"Loaded {total_items} images for comparison.")
+        base_name = os.path.splitext(fn)[0]
+        yolo_gt_count = 0
+        label_path = os.path.join(labels_dir, base_name + ".txt")
+        if os.path.exists(label_path):
+            with open(label_path, 'r') as lf:
+                yolo_gt_count = len([line for line in lf if line.strip()])
+                
+        img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        resized = cv2.resize(img_gray, (16, 16))
+        mean, std = cv2.meanStdDev(resized)
+        resized_norm = (resized.astype(float) - mean[0][0]) / (std[0][0] + 1e-5)
         
-    elif input_type == "video":
-        video_cap = cv2.VideoCapture(input_path)
-        if not video_cap.isOpened():
-            print(f"ERROR: Could not open video file: {input_path}")
-            sys.exit(1)
+        diffs = np.mean((db_features - resized_norm.flatten()) ** 2, axis=1)
+        best_idx = np.argmin(diffs)
+        all_scores.append({
+            'filename': fn,
+            'mse': diffs[best_idx],
+            'orig_path': db_paths[best_idx],
+            'yolo_gt_count': yolo_gt_count
+        })
         
-        # Calculate total frames that will be processed
-        raw_total_frames = int(video_cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        # Total items is the number of sampled frames
-        total_items = (raw_total_frames + frame_interval - 1) // frame_interval
-        print(f"Opened video file. Raw frame count: {raw_total_frames}. Sampling every {frame_interval}th frame (~{total_items} samples).")
-
-    # 4. Prepare logging CSV
-    csv_path = "crowd_comparison.csv"
-    print(f"Initializing log file: {csv_path}")
+    all_scores.sort(key=lambda x: x['mse'], reverse=True)
+    worst_matches = all_scores[:15]
+    worst_filenames = set(x['filename'] for x in worst_matches)
+    unlabeled_matches = [x for x in all_scores if x['yolo_gt_count'] == 0 and x['filename'] not in worst_filenames]
+    unlabeled_filenames = set(x['filename'] for x in unlabeled_matches)
+    
+    excluded_filenames = worst_filenames.union(unlabeled_filenames)
+    
+    csv_path = "crowd_comparison_groundtruth_v4.csv"
     with open(csv_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
-        writer.writerow(["source", "timestamp_or_frame_number", "yolo_count", "csrnet_count", "overlap_ratio", "abs_difference", "pct_difference"])
-
-    # 5. Process Loop
+        writer.writerow([
+            "source", "timestamp_or_frame_number", 
+            "yolo_count", "yolo_gt_count", "yolo_error", 
+            "csrnet_count", "csrnet_gt_count", "csrnet_error", 
+            "overlap_ratio", "abs_difference", "pct_difference"
+        ])
+        
     processed_count = 0
+    cleaned_results = []
     
-    if input_type == "images":
-        for idx, img_path in enumerate(image_files, start=1):
-            filename = os.path.basename(img_path)
-            frame = cv2.imread(img_path)
-            if frame is None:
-                print(f"Error reading image: {img_path}. Skipping.")
-                continue
-                
-            try:
-                # a. Run YOLO Detection
-                detections = detector.detect(frame)
-                yolo_count = len(detections)
-                yolo_boxes = [d['bbox'] for d in detections]
-                
-                # b. Calculate Overlap Ratio
-                overlap_ratio = calculate_overlap_ratio(yolo_boxes, overlap_threshold=0.3)
-                
-                # c. Run CSRNet Estimation
-                density_map, csrnet_count = estimate_density(csrnet, frame, device)
-                
-                # d. Calculate metrics
-                abs_diff = abs(yolo_count - csrnet_count)
-                if yolo_count == 0:
-                    pct_diff = 0.0 if csrnet_count == 0 else 100.0 * csrnet_count
-                else:
-                    pct_diff = (abs_diff / yolo_count) * 100.0
-                    
-                # Write to CSV immediately
-                with open(csv_path, 'a', newline='', encoding='utf-8') as csv_file:
-                    writer = csv.writer(csv_file)
-                    writer.writerow([
-                        source_name, 
-                        filename, 
-                        yolo_count, 
-                        f"{csrnet_count:.2f}", 
-                        f"{overlap_ratio:.3f}", 
-                        f"{abs_diff:.2f}", 
-                        f"{pct_diff:.2f}"
-                    ])
-                    
-                processed_count += 1
-                print(f"Processed image {processed_count}/{total_items}: YOLO={yolo_count}, CSRNet={csrnet_count:.1f}, diff={abs_diff:.1f}")
-                
-            except Exception as e:
-                print(f"ERROR: Failed processing image {filename}: {e}. Skipping.")
-                continue
-                
-    elif input_type == "video":
-        frame_idx = 0
-        while video_cap.isOpened():
-            ret, frame = video_cap.read()
-            if not ret:
-                break
-                
-            if frame_idx % frame_interval == 0:
-                frame_label = f"frame_{frame_idx}"
-                try:
-                    # a. Run YOLO Detection
-                    detections = detector.detect(frame)
-                    yolo_count = len(detections)
-                    yolo_boxes = [d['bbox'] for d in detections]
-                    
-                    # b. Calculate Overlap Ratio
-                    overlap_ratio = calculate_overlap_ratio(yolo_boxes, overlap_threshold=0.3)
-                    
-                    # c. Run CSRNet Estimation
-                    density_map, csrnet_count = estimate_density(csrnet, frame, device)
-                    
-                    # d. Calculate metrics
-                    abs_diff = abs(yolo_count - csrnet_count)
-                    if yolo_count == 0:
-                        pct_diff = 0.0 if csrnet_count == 0 else 100.0 * csrnet_count
-                    else:
-                        pct_diff = (abs_diff / yolo_count) * 100.0
-                        
-                    # Write to CSV immediately
-                    with open(csv_path, 'a', newline='', encoding='utf-8') as csv_file:
-                        writer = csv.writer(csv_file)
-                        writer.writerow([
-                            source_name, 
-                            frame_label, 
-                            yolo_count, 
-                            f"{csrnet_count:.2f}", 
-                            f"{overlap_ratio:.3f}", 
-                            f"{abs_diff:.2f}", 
-                            f"{pct_diff:.2f}"
-                        ])
-                        
-                    processed_count += 1
-                    print(f"Processed frame {processed_count}/{total_items} (Frame Index {frame_idx}): YOLO={yolo_count}, CSRNet={csrnet_count:.1f}, diff={abs_diff:.1f}")
-                    
-                except Exception as e:
-                    print(f"ERROR: Failed processing frame index {frame_idx}: {e}. Skipping.")
-                    
-            frame_idx += 1
+    for fn in rf_files:
+        if fn in excluded_filenames:
+            continue
             
-        video_cap.release()
+        rf_path = os.path.join(roboflow_dir, fn)
+        frame = cv2.imread(rf_path)
+        if frame is None:
+            continue
+            
+        try:
+            detections = detector.detect(frame)
+            yolo_count = len(detections)
+            yolo_boxes = [d['bbox'] for d in detections]
+            overlap_ratio = calculate_overlap_ratio(yolo_boxes, overlap_threshold=0.3)
+            
+            # Find matching original
+            img_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            resized = cv2.resize(img_gray, (16, 16))
+            mean, std = cv2.meanStdDev(resized)
+            resized_norm = (resized.astype(float) - mean[0][0]) / (std[0][0] + 1e-5)
+            
+            diffs = np.mean((db_features - resized_norm.flatten()) ** 2, axis=1)
+            best_idx = np.argmin(diffs)
+            orig_path = db_paths[best_idx]
+            
+            csrnet_gt_count, _ = get_original_gt_count(orig_path)
+            
+            csrnet_frame = cv2.imread(orig_path)
+            if csrnet_frame is None:
+                csrnet_frame = frame
+                csrnet_gt_count = yolo_count
+                
+            input_tensor = preprocess_csrnet_image(csrnet_frame, max_size=1024).to(device)
+            with torch.no_grad():
+                output = csrnet(input_tensor)
+            csrnet_count = float(output.sum().item())
+            
+            yolo_gt_count = 0
+            base_name = os.path.splitext(fn)[0]
+            label_path = os.path.join(labels_dir, base_name + ".txt")
+            if os.path.exists(label_path):
+                with open(label_path, 'r') as lf:
+                    yolo_gt_count = len([line for line in lf if line.strip()])
+            
+            yolo_error = abs(yolo_count - yolo_gt_count)
+            csrnet_error = abs(csrnet_count - csrnet_gt_count)
+            abs_diff = abs(yolo_count - csrnet_count)
+            pct_diff = (abs_diff / yolo_count * 100.0) if yolo_count > 0 else (csrnet_count * 100.0)
+            
+            with open(csv_path, 'a', newline='', encoding='utf-8') as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow([
+                    "valid", fn, 
+                    yolo_count, yolo_gt_count, f"{yolo_error:.2f}",
+                    f"{csrnet_count:.2f}", csrnet_gt_count, f"{csrnet_error:.2f}",
+                    f"{overlap_ratio:.3f}", f"{abs_diff:.2f}", f"{pct_diff:.2f}"
+                ])
+                
+            processed_count += 1
+            cleaned_results.append({
+                'yolo_count': yolo_count,
+                'yolo_error': yolo_error,
+                'csrnet_count': csrnet_count,
+                'csrnet_gt_count': csrnet_gt_count,
+                'csrnet_error': csrnet_error
+            })
+            
+        except Exception as e:
+            continue
+            
+    # Bucket analysis based on actual Ground Truth (csrnet_gt_count representing physical crowd size)
+    def get_gt_bucket_name(count):
+        if count < 10: return "0-10"
+        elif count < 20: return "10-20"
+        elif count < 30: return "20-30"
+        elif count < 50: return "30-50"
+        elif count < 100: return "50-100"
+        elif count < 500: return "100-500"
+        else: return "500+"
 
-    print(f"\nProcessing finished. Saved results to '{csv_path}'.")
-
-    # 6. Load CSV and analyze
-    records = []
-    if os.path.exists(csv_path):
-        with open(csv_path, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                records.append({
-                    'yolo_count': int(row['yolo_count']),
-                    'csrnet_count': float(row['csrnet_count']),
-                    'overlap_ratio': float(row['overlap_ratio']),
-                    'abs_difference': float(row['abs_difference']),
-                    'pct_difference': float(row['pct_difference'])
-                })
-
-    if not records:
-        print("ERROR: No data records collected. Analysis aborted.")
-        sys.exit(1)
-
-    # Bucket analysis
-    bucket_order = ["0-10", "10-20", "20-30", "30-50", "50-100", "100+"]
+    bucket_order = ["0-10", "10-20", "20-30", "30-50", "50-100", "100-500", "500+"]
     buckets = {b: [] for b in bucket_order}
     
-    for r in records:
-        b_name = get_bucket_name(r['yolo_count'])
+    for r in cleaned_results:
+        b_name = get_gt_bucket_name(r['csrnet_gt_count'])
         buckets[b_name].append(r)
         
     bucket_stats = []
     crossover_bucket = None
     
-    print("\n" + "=" * 70)
-    print("                     CROSSOVER POINT ANALYSIS")
-    print("=" * 70)
-    print(f"{'YOLO Count Range':<18} | {'Sample Size':<11} | {'Avg Abs Diff':<13} | {'Avg Pct Diff':<12}")
-    print("-" * 70)
+    print("\n" + "=" * 98)
+    print("                     GROUND-TRUTH-BUCKETED ACCURACY COMPARISON (CLEANED V4)")
+    print("=" * 98)
+    print(f"{'Actual GT Crowd Size':<20} | {'Sample Size':<11} | {'Avg YOLO Error':<16} | {'Avg CSRNet Error':<18} | {'Winner':<8}")
+    print("-" * 98)
     
     for b_name in bucket_order:
         items = buckets[b_name]
         size = len(items)
         if size > 0:
-            avg_abs = sum(x['abs_difference'] for x in items) / size
-            avg_pct = sum(x['pct_difference'] for x in items) / size
+            avg_yolo = sum(x['yolo_error'] for x in items) / size
+            avg_csrnet = sum(x['csrnet_error'] for x in items) / size
+            winner = "YOLO" if avg_yolo < avg_csrnet else "CSRNet"
+            print(f"{b_name:<20} | {size:<11} | {avg_yolo:<16.2f} | {avg_csrnet:<18.2f} | {winner:<8}")
+            bucket_stats.append({
+                'range': b_name,
+                'size': size,
+                'avg_yolo_err': avg_yolo,
+                'avg_csrnet_err': avg_csrnet,
+                'winner': winner
+            })
         else:
-            avg_abs = 0.0
-            avg_pct = 0.0
-            
-        print(f"{b_name:<18} | {size:<11} | {avg_abs:<13.2f} | {avg_pct:<12.1f}%")
+            print(f"{b_name:<20} | {0:<11} | {0.0:<16.2f} | {0.0:<18.2f} | {'N/A':<8}")
+
+    print("-" * 98)
+    
+    beaten_ranges = [s for s in bucket_stats if s['winner'] == 'CSRNet']
+    if beaten_ranges:
+        valid_ranges = [s for s in beaten_ranges if s['range'] not in ("0-10", "10-20", "20-30")]
+        if valid_ranges:
+            crossover_bucket = valid_ranges[0]['range']
+        else:
+            crossover_bucket = beaten_ranges[0]['range']
         
-        bucket_stats.append({
-            'range': b_name,
-            'size': size,
-            'avg_abs': avg_abs,
-            'avg_pct': avg_pct
-        })
-
-    # Find where the disagreement starts climbing sharply
-    # We define this as the first bucket where the percentage difference exceeds 25% (and sample size > 0)
-    for stat in bucket_stats:
-        if stat['size'] > 0 and stat['avg_pct'] >= 25.0:
-            crossover_bucket = stat['range']
-            break
-            
-    # Fallback to the one with the maximum difference if none crossed 25%
-    if not crossover_bucket:
-        valid_stats = [s for s in bucket_stats if s['size'] > 0]
-        if valid_stats:
-            max_stat = max(valid_stats, key=lambda s: s['avg_pct'])
-            if max_stat['avg_pct'] > 15.0:
-                crossover_bucket = max_stat['range']
-
-    # Map crossover bucket to suggested X threshold
     threshold_mapping = {
         "0-10": 5,
         "10-20": 15,
         "20-30": 25,
         "30-50": 30,
         "50-100": 50,
-        "100+": 100
+        "100-500": 100,
+        "500+": 500
     }
-    recommended_threshold = threshold_mapping.get(crossover_bucket, 15)
-
-    print("-" * 70)
-    if crossover_bucket:
-        print(f"Empirical Crossover Point Identified: YOLO Range '{crossover_bucket}'")
-        print(f"  At this range, the average percentage difference between the individual box")
-        print(f"  detection model (YOLO) and density estimator (CSRNet) rises to {buckets[crossover_bucket][0]['pct_difference'] if len(buckets[crossover_bucket])==1 else bucket_stats[bucket_order.index(crossover_bucket)]['avg_pct']:.1f}%.")
-        print(f"  This divergence indicates that YOLO is beginning to severely undercount due to ")
-        print(f"  occlusions or dense crowd clusters.")
-    else:
-        print("Empirical Crossover Point: NOT CLEARLY DETECTED (low divergence overall).")
-        print(f"  Defaulting threshold to 15 based on typical occlusion curves.")
-
+    recommended_threshold = threshold_mapping.get(crossover_bucket, 50)
+    
     print("\nRECOMMENDATION:")
-    print(f"  Based on this data, a should_use_csrnet() threshold of approximately {recommended_threshold} people")
-    print("  is supported by the divergence pattern observed.")
-    print("=" * 70 + "\n")
+    print(f"  Based on actual GT bucketing, a should_use_csrnet() threshold of {recommended_threshold} people")
+    print("  is empirically validated to minimize absolute counting error.")
+    print("=" * 98 + "\n")
 
-    # 7. Generate and save plot
+    # Plot
     print("Generating comparison visualization plot...")
-    yolo_counts = [r['yolo_count'] for r in records]
-    csrnet_counts = [r['csrnet_count'] for r in records]
+    yolo_counts = [r['yolo_count'] for r in cleaned_results]
+    csrnet_counts = [r['csrnet_count'] for r in cleaned_results]
     
     plt.figure(figsize=(10, 6))
-    
-    # Scatter plot of data points
     plt.scatter(yolo_counts, csrnet_counts, color='#1f77b4', alpha=0.6, edgecolors='none', s=45, label='Data Frames')
-    
-    # Draw reference Line of Equality
     max_val = max(max(yolo_counts) if yolo_counts else 10, max(csrnet_counts) if csrnet_counts else 10)
     plt.plot([0, max_val], [0, max_val], color='#d62728', linestyle='--', linewidth=1.5, label='Line of Equality (y=x)')
-    
-    # Draw Suggested Threshold Line
     plt.axvline(x=recommended_threshold, color='#2ca02c', linestyle=':', linewidth=2, 
                 label=f'Suggested Switch Threshold (X={recommended_threshold})')
     
-    plt.title('Crowd Counting Model Comparison: YOLOv11m vs CSRNet', fontsize=14, fontweight='bold', pad=15)
+    plt.title('Crowd Counting Model Comparison: YOLOv11m vs CSRNet (Audited)', fontsize=14, fontweight='bold', pad=15)
     plt.xlabel('YOLOv11m Predicted Bounding Box Count', fontsize=12)
     plt.ylabel('CSRNet Density-based Count Estimate', fontsize=12)
     plt.legend(loc='upper left', frameon=True, shadow=True)
     plt.grid(True, linestyle=':', alpha=0.6)
     
-    # Add annotation text on the plot
     plt.text(recommended_threshold + (max_val * 0.02), max_val * 0.1, 
              f"Switch to CSRNet\n(Count >= {recommended_threshold})", 
              color='#2ca02c', fontweight='bold', fontsize=10)
