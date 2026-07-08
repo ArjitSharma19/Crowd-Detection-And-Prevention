@@ -16,7 +16,7 @@ from src.velocity import update_track_history, get_zone_velocity_stats
 # EDITABLE INPUT PATH CONFIGURATION
 # =====================================================================
 # Set to 0 to use webcam, or path to a video file
-INPUT_PATH = r"E:\test_video.mp4"
+INPUT_PATH = r"E:\test_video_3.mp4"
 CONFIDENCE_THRESHOLD = 0.15          # Lower threshold (e.g. 0.10 - 0.20) to detect people in low light
 ENHANCE_LOW_LIGHT = True             # Apply CLAHE to boost contrast in dark areas
 # =====================================================================
