@@ -25,6 +25,8 @@ from src.density import (
     get_smoothed_count
 )
 from src.sahi_detector import run_sahi_detection, SLICE_CONFIG
+from src.tracker import track_frame
+from src.velocity import update_track_history, get_zone_velocity_stats
 
 app = FastAPI(title="CrowdShield AI Backend")
 
@@ -42,7 +44,7 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # =====================================================================
 # Set to 0 to use your webcam, or a string path to a video file.
 # Example: VIDEO_SOURCE = r"C:\path\to\your\video.mp4"
-VIDEO_SOURCE = r"E:\test_video.mp4"
+VIDEO_SOURCE = r"E:\test_video_4.mp4"
 
 # Auto-resolve directory to video file if needed
 if isinstance(VIDEO_SOURCE, str) and os.path.isdir(VIDEO_SOURCE):
@@ -116,6 +118,9 @@ zone_states = {}  # key: (row, col), value: {'logged_tier': 'safe', 'pending_tie
 model_decision_history = []
 count_history = []
 
+# Global state tracking for person trajectories (ByteTrack)
+track_history_dict = {}
+
 def process_frame(frame, detection_mode="auto"):
     """
     Processes a single frame running YOLO, SAHI, or CSRNet models.
@@ -137,7 +142,7 @@ def process_frame(frame, detection_mode="auto"):
             'boxes': list or None      # List of YOLO bounding boxes (only if YOLO/SAHI was used)
         }
     """
-    global model_decision_history, count_history
+    global model_decision_history, count_history, track_history_dict
     if frame is None:
         return {
             'count': 0.0,
@@ -145,7 +150,12 @@ def process_frame(frame, detection_mode="auto"):
             'risk_per_zone': np.full((3, 3), "safe", dtype=object),
             'model_used': "YOLO",
             'heatmap_image': None,
-            'boxes': []
+            'boxes': [],
+            'raw_yolo_detections': [],
+            'raw_density_map': np.zeros((96, 128), dtype=np.float32),
+            'avg_speeds': np.zeros((3, 3), dtype=np.float32),
+            'dir_variances': np.zeros((3, 3), dtype=np.float32),
+            'tracked_objects': []
         }
         
     # Get camera environment config
@@ -159,12 +169,11 @@ def process_frame(frame, detection_mode="auto"):
     csrnet_count = 0.0
     ran_sahi = False
     
+    tracked_objects = []
+    avg_speeds = np.zeros((3, 3), dtype=np.float32)
+    dir_variances = np.zeros((3, 3), dtype=np.float32)
+    
     # 1. Run YOLO/SAHI first if Auto or forced YOLO is active.
-    # Note: Running YOLO+SAHI (or plain YOLO if camera_environment is "general") first ensures we get
-    # the best available YOLO-based count for this frame.
-    # CRITICAL: This means YOLO/SAHI runs even on frames that end up using CSRNet's result. This adds
-    # computational cost, which could be optimized later (e.g., a cheap quick density pre-check),
-    # but correctness of the switching decision comes first.
     run_yolo = (detection_mode in ("yolo", "auto"))
     if run_yolo:
         if slice_params is not None:
@@ -181,16 +190,56 @@ def process_frame(frame, detection_mode="auto"):
                 overlap_ratio=slice_params["overlap_ratio"]
             )
             ran_sahi = True
+            yolo_count = len(yolo_detections)
+            yolo_boxes = [det['bbox'] for det in yolo_detections]
         else:
-            yolo_detections = detector.detect(frame)
-
-        yolo_count = len(yolo_detections)
-        yolo_boxes = [det['bbox'] for det in yolo_detections]
+            # Run ByteTrack Tracking in Standard YOLO mode
+            active_model = detector.model_general if detector.model_type == "general" else detector.model_crowd
+            tracked_objects = track_frame(
+                model=active_model,
+                frame=frame,
+                imgsz=detector.imgsz,
+                conf=detector.confidence_threshold
+            )
+            
+            yolo_detections = []
+            for obj in tracked_objects:
+                yolo_detections.append({
+                    'bbox': obj['bbox'],
+                    'confidence': 1.0,
+                    'class_id': 0
+                })
+            
+            yolo_count = len(yolo_detections)
+            yolo_boxes = [obj['bbox'] for obj in tracked_objects]
+            
+            # Update tracking history
+            now = time.time()
+            active_ids = set()
+            for obj in tracked_objects:
+                track_id = obj['track_id']
+                center = obj['center_point']
+                update_track_history(track_id, center, now, track_history_dict, max_history=15)
+                active_ids.add(track_id)
+                
+            # Prune trajectories of lost tracks to save memory
+            all_ids = list(track_history_dict.keys())
+            for tid in all_ids:
+                if tid not in active_ids and len(track_history_dict[tid]) > 0:
+                    # If they have been gone for more than 5 seconds, clear history
+                    if now - track_history_dict[tid][-1]['time'] > 5.0:
+                        del track_history_dict[tid]
+                        
+            # Compute spatial zone velocity metrics
+            avg_speeds, dir_variances = get_zone_velocity_stats(
+                tracked_objects, 
+                track_history_dict, 
+                frame.shape, 
+                grid_rows=3, 
+                grid_cols=3
+            )
         
     # 2. Determine which model output to trust.
-    # CRITICAL: The switching decision must always use the most accurate available YOLO-based count
-    # for the current camera environment, never a plain unsliced count when SAHI would normally apply,
-    # otherwise dense scenes can be incorrectly judged as low-density and never hand off to CSRNet.
     if detection_mode == "csrnet":
         use_csrnet = True
     elif detection_mode == "yolo":
@@ -256,7 +305,10 @@ def process_frame(frame, detection_mode="auto"):
         'heatmap_image': heatmap_image,
         'boxes': boxes_out,
         'raw_yolo_detections': yolo_detections,
-        'raw_density_map': density_map if density_map is not None else np.zeros((96, 128), dtype=np.float32)
+        'raw_density_map': density_map if density_map is not None else np.zeros((96, 128), dtype=np.float32),
+        'avg_speeds': avg_speeds,
+        'dir_variances': dir_variances,
+        'tracked_objects': tracked_objects
     }
 
 def draw_grid_overlay(frame, grid, risk_grid):
@@ -303,6 +355,93 @@ def draw_grid_overlay(frame, grid, risk_grid):
             
     return annotated_frame
 
+def draw_motion_overlays(frame, tracked_objects, history_dict, avg_speeds, dir_variances, risk_grid, grid_rows=3, grid_cols=3):
+    """
+    Draws tracking bounding boxes, track IDs, fading motion trails, and cell-level velocity statistics.
+    """
+    annotated = frame.copy()
+    h, w = frame.shape[:2]
+    cell_h = h // grid_rows
+    cell_w = w // grid_cols
+    
+    # 1. Draw spatial grid lines (subtle dark gray)
+    for col in range(1, grid_cols):
+        x = col * cell_w
+        cv2.line(annotated, (x, 0), (x, h), (100, 100, 100), 1, cv2.LINE_AA)
+    for row in range(1, grid_rows):
+        y = row * cell_h
+        cv2.line(annotated, (0, y), (w, y), (100, 100, 100), 1, cv2.LINE_AA)
+        
+    # 2. Draw trajectories (smooth trails) for each person
+    for track_id, history in history_dict.items():
+        if len(history) >= 2:
+            points = [item['center'] for item in history]
+            for idx in range(len(points) - 1):
+                # Fade color based on age (older lines are darker, newer are vibrant cyan)
+                alpha = int(255 * (idx / len(points)))
+                color = (255, alpha, 0)  # Cyan/blue fading trail (BGR)
+                cv2.line(annotated, points[idx], points[idx+1], color, 2, cv2.LINE_AA)
+                
+    # 3. Draw bounding boxes + track IDs
+    for obj in tracked_objects:
+        x1, y1, x2, y2 = obj['bbox']
+        track_id = obj['track_id']
+        
+        # Bounding box
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (235, 206, 135), 2, cv2.LINE_AA)
+        
+        # ID tag
+        tag = f"ID: {track_id}"
+        (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+        cv2.rectangle(annotated, (x1, y1 - th - 4), (x1 + tw, y1), (235, 206, 135), -1)
+        cv2.putText(annotated, tag, (x1, y1 - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1, cv2.LINE_AA)
+        
+    # 4. Draw cell info overlays (speed and direction variance)
+    for r in range(grid_rows):
+        for c in range(grid_cols):
+            speed = avg_speeds[r, c]
+            var = dir_variances[r, c]
+            risk = risk_grid[r, c]
+            
+            # Center of the cell
+            cx = int(c * cell_w + cell_w / 2)
+            cy = int(r * cell_h + cell_h / 2)
+            
+            speed_str = f"Spd: {speed:.1f} px/s"
+            var_str = f"Turb: {var:.2f}"
+            
+            # Set color based on risk status
+            if risk == 'danger':
+                color = (0, 0, 255) # Red
+            elif risk == 'caution':
+                color = (0, 255, 255) # Yellow/Amber
+            else:
+                color = (0, 255, 0) # Green
+                
+            # Draw semi-transparent background block for cell stats
+            tw = max(cv2.getTextSize(speed_str, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0][0],
+                     cv2.getTextSize(var_str, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0][0])
+            th = 28
+            
+            bx1, by1 = cx - tw//2 - 6, cy - th//2 - 2
+            bx2, by2 = cx + tw//2 + 6, cy + th//2 + 2
+            
+            # Blend overlay block
+            sub_img = annotated[by1:by2, bx1:bx2]
+            if sub_img.size > 0:
+                black_rect = np.zeros_like(sub_img)
+                cv2.rectangle(black_rect, (0, 0), (bx2-bx1, by2-by1), (15, 23, 42), -1)
+                blended = cv2.addWeighted(sub_img, 0.4, black_rect, 0.6, 0)
+                annotated[by1:by2, bx1:bx2] = blended
+                
+            cv2.rectangle(annotated, (bx1, by1), (bx2, by2), color, 1, cv2.LINE_AA)
+            cv2.putText(annotated, speed_str, (cx - tw//2, cy - 3), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(annotated, var_str, (cx - tw//2, cy + 10), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+                
+    return annotated
+
 # Global metrics cache
 metrics_cache = {
     "current_count": 0,
@@ -311,7 +450,9 @@ metrics_cache = {
     "status_message": "System operating normally.",
     "model_used": "YOLO",
     "risk_per_zone": [],
-    "alert_history": []
+    "alert_history": [],
+    "avg_speeds": [],
+    "dir_variances": []
 }
 
 class ConfigPayload(BaseModel):
@@ -374,7 +515,9 @@ async def get_current_status():
         "zone_grid": metrics_cache.get("zone_grid", []),
         "alert_history": alert_history,
         "max_capacity": alert_manager.max_capacity,
-        "caution_at": getattr(alert_manager, 'caution_at', 70)
+        "caution_at": getattr(alert_manager, 'caution_at', 70),
+        "avg_speeds": metrics_cache.get("avg_speeds", []),
+        "dir_variances": metrics_cache.get("dir_variances", [])
     }
 
 @app.post("/api/config")
@@ -534,6 +677,22 @@ def frame_generator(mode: str):
                     cv2.rectangle(processed_frame, (10, 10), (450, 45), (15, 23, 42), -1)
                     cv2.putText(processed_frame, f"Currently using {model_used}", (20, 32), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (56, 189, 248), 2, cv2.LINE_AA)
+            elif mode == "motion":
+                # Motion Flow View: Show tracked bounding boxes, IDs, trajectory trails, and grid-level stats
+                if model_used == "YOLO":
+                    processed_frame = draw_motion_overlays(
+                        frame=frame,
+                        tracked_objects=result.get('tracked_objects', []),
+                        history_dict=track_history_dict,
+                        avg_speeds=result.get('avg_speeds'),
+                        dir_variances=result.get('dir_variances'),
+                        risk_grid=result['risk_per_zone']
+                    )
+                else:
+                    # If CSRNet or SAHI is active, show warning banner
+                    cv2.rectangle(processed_frame, (10, 10), (550, 45), (15, 23, 42), -1)
+                    cv2.putText(processed_frame, "Motion flow requires Standard YOLO Mode", (20, 32), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 128, 255), 2, cv2.LINE_AA)
             elif mode == "grid":
                 # Grid Cell View: Show the spatial grid overlay regardless of which model is active
                 processed_frame = draw_grid_overlay(frame, result['zone_grid'], result['risk_per_zone'])
@@ -548,7 +707,13 @@ def frame_generator(mode: str):
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (56, 189, 248), 2, cv2.LINE_AA)
                 
             # Update alerting status (alert_manager runs on the active model's decision output)
-            alert_status = alert_manager.update(current_count, peak_density)
+            alert_status = alert_manager.update(
+                current_count, 
+                peak_density, 
+                avg_speeds=result.get('avg_speeds'), 
+                dir_variances=result.get('dir_variances'), 
+                zone_grid=result.get('zone_grid')
+            )
             
             # Write metrics cache
             metrics_cache["current_count"] = int(current_count) if current_count % 1 == 0 else round(current_count, 1)
@@ -562,6 +727,8 @@ def frame_generator(mode: str):
             metrics_cache["boxes"] = result['boxes'] if result['boxes'] is not None else []
             metrics_cache["max_capacity"] = alert_manager.max_capacity
             metrics_cache["caution_at"] = getattr(alert_manager, 'caution_at', 70)
+            metrics_cache["avg_speeds"] = result.get('avg_speeds').tolist() if hasattr(result.get('avg_speeds'), 'tolist') else result.get('avg_speeds', [])
+            metrics_cache["dir_variances"] = result.get('dir_variances').tolist() if hasattr(result.get('dir_variances'), 'tolist') else result.get('dir_variances', [])
             
             # Compute real YOLO/SAHI detection average confidence
             yolo_det = result['raw_yolo_detections']
