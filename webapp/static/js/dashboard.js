@@ -113,6 +113,18 @@ async function syncConfigFromBackend() {
                 }
             }
         });
+
+        // Update description helper text
+        const elDesc = document.getElementById('detection-mode-desc');
+        if (elDesc) {
+            if (thresholds.detectionMode === 'auto') {
+                elDesc.innerHTML = `<strong>Auto Mode:</strong> Intelligently switches between YOLO (low/moderate crowds) and CSRNet (dense crowds) based on crowd density and overlaps.`;
+            } else if (thresholds.detectionMode === 'yolo') {
+                elDesc.innerHTML = `<strong>YOLO Mode:</strong> Best for sparse to moderate crowd sizes. Draws individual bounding boxes and calculates confidence.`;
+            } else if (thresholds.detectionMode === 'csrnet') {
+                elDesc.innerHTML = `<strong>CSRNet Mode:</strong> Best for highly congested, dense crowds where occlusion is severe. Uses density map estimation to calculate counts without bounding boxes.`;
+            }
+        }
         
         console.log('Successfully synced initial config from backend:', config);
     } catch (error) {
@@ -161,6 +173,18 @@ function setDetectionMode(mode) {
             }
         }
     });
+
+    // Update description helper text dynamically
+    const elDesc = document.getElementById('detection-mode-desc');
+    if (elDesc) {
+        if (mode === 'auto') {
+            elDesc.innerHTML = `<strong>Auto Mode:</strong> Intelligently switches between YOLO (low/moderate crowds) and CSRNet (dense crowds) based on crowd density and overlaps.`;
+        } else if (mode === 'yolo') {
+            elDesc.innerHTML = `<strong>YOLO Mode:</strong> Best for sparse to moderate crowd sizes. Draws individual bounding boxes and calculates confidence.`;
+        } else if (mode === 'csrnet') {
+            elDesc.innerHTML = `<strong>CSRNet Mode:</strong> Best for highly congested, dense crowds where occlusion is severe. Uses density map estimation to calculate counts without bounding boxes.`;
+        }
+    }
     
     // Send update to backend
     sendConfigUpdate();
@@ -174,7 +198,7 @@ function setViewMode(mode) {
     console.log(`View mode changed to: ${mode}`);
     
     // Update button styling
-    const buttons = ['btn-mode-raw', 'btn-mode-heatmap', 'btn-mode-grid'];
+    const buttons = ['btn-mode-raw', 'btn-mode-heatmap', 'btn-mode-grid', 'btn-mode-motion'];
     buttons.forEach(id => {
         const btn = document.getElementById(id);
         if (btn) {
