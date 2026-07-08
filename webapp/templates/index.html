@@ -75,6 +75,7 @@
                          <button id="btn-mode-raw" class="btn-toggle active" onclick="setViewMode('raw')">Raw box</button>
                          <button id="btn-mode-heatmap" class="btn-toggle" onclick="setViewMode('heatmap')">Heatmap</button>
                          <button id="btn-mode-grid" class="btn-toggle" onclick="setViewMode('grid')">Grid cell</button>
+                         <button id="btn-mode-motion" class="btn-toggle" onclick="setViewMode('motion')">Motion flow</button>
                      </div>
 
                      <!-- Detection-Mode Toggle Buttons -->
@@ -84,6 +85,9 @@
                               <button id="btn-det-auto" class="btn-toggle active" onclick="setDetectionMode('auto')">Auto</button>
                               <button id="btn-det-yolo" class="btn-toggle" onclick="setDetectionMode('yolo')">YOLO</button>
                               <button id="btn-det-csrnet" class="btn-toggle" onclick="setDetectionMode('csrnet')">CSRNet</button>
+                          </div>
+                          <div id="detection-mode-desc" class="helper-text" style="line-height: 1.4; margin-top: 4px; padding: 8px 10px; border-radius: 6px; background-color: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-subtle); transition: all 0.2s ease;">
+                              <strong>Auto Mode:</strong> Intelligently switches between YOLO (low/moderate crowds) and CSRNet (dense crowds) based on crowd density and overlaps.
                           </div>
                      </div>
                 </div>
