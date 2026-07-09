@@ -44,3 +44,8 @@ crowd_density_merged/
 data/jhu_crowd_v2.0/
 data/jhu_crowd_v2.0.zip
 
+# Media files
+*.mp4
+*.avi
+*.mkv
+

@@ -1,0 +1,18 @@
+.git
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore raw datasets and zip files
+*.zip
+Night Vision.v3i.yolov11/
+Night Vision Subsampled/
+crowd counting dataset.v2i.yolov11/
+crowd density.v1-v1.yolov8/
+crowd_density_merged/
+
+# Ignore volumes and runs (these are mounted dynamically via docker-compose)
+data/
+runs/

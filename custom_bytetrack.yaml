@@ -1,0 +1,8 @@
+# Custom ByteTrack configuration for CrowdShield AI
+tracker_type: bytetrack
+track_high_thresh: 0.25 # threshold for the first association
+track_low_thresh: 0.1 # threshold for the second association
+new_track_thresh: 0.25 # threshold for initiating a new track
+track_buffer: 90 # frames to keep a lost track alive before deleting it (up from 30)
+match_thresh: 0.7 # IoU threshold for matching (down from 0.8 for more lenient matching)
+fuse_score: True

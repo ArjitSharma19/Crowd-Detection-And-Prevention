@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  crowdshield-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crowdshield-ai
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - RELOAD=false
+      - VIDEO_SOURCE=/app/data/tesr_video_5.mp4 # Path to the copied test video inside the container
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
