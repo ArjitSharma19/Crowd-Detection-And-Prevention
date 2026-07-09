@@ -466,13 +466,16 @@ function setupSliders() {
 function updateAuthUI() {
     const elAuthText = document.getElementById('auth-status-text');
     const elAuthBtn = document.getElementById('btn-auth');
+    const elChangePwBtn = document.getElementById('btn-change-pw');
     if (jwtToken) {
         if (elAuthText) elAuthText.textContent = `🔓 Admin Mode (${userRole})`;
         if (elAuthBtn) elAuthBtn.textContent = 'Logout';
+        if (elChangePwBtn) elChangePwBtn.style.display = 'inline-block';
         setSlidersEnabled(true);
     } else {
         if (elAuthText) elAuthText.textContent = '🔒 Read-Only (Login to edit)';
         if (elAuthBtn) elAuthBtn.textContent = 'Login';
+        if (elChangePwBtn) elChangePwBtn.style.display = 'none';
         setSlidersEnabled(false);
     }
 }
@@ -572,4 +575,78 @@ window.logout = function() {
     localStorage.removeItem('crowdshield_role');
     updateAuthUI();
     console.log('Logged out successfully.');
+}
+
+window.showChangePwModal = function() {
+    const errEl = document.getElementById('change-pw-error');
+    const succEl = document.getElementById('change-pw-success');
+    const currEl = document.getElementById('change-pw-current');
+    const newEl = document.getElementById('change-pw-new');
+    
+    if (errEl) errEl.style.display = 'none';
+    if (succEl) succEl.style.display = 'none';
+    if (currEl) currEl.value = '';
+    if (newEl) newEl.value = '';
+    
+    document.getElementById('change-pw-modal').style.display = 'flex';
+}
+
+window.hideChangePwModal = function() {
+    document.getElementById('change-pw-modal').style.display = 'none';
+}
+
+window.submitChangePw = async function() {
+    const currEl = document.getElementById('change-pw-current');
+    const newEl = document.getElementById('change-pw-new');
+    const errEl = document.getElementById('change-pw-error');
+    const succEl = document.getElementById('change-pw-success');
+    
+    if (!currEl || !newEl) return;
+    
+    const current_password = currEl.value;
+    const new_password = newEl.value;
+    
+    if (!current_password || !new_password) {
+        if (errEl) {
+            errEl.textContent = 'Both fields are required.';
+            errEl.style.display = 'block';
+        }
+        return;
+    }
+    
+    if (errEl) errEl.style.display = 'none';
+    if (succEl) succEl.style.display = 'none';
+    
+    try {
+        const response = await fetch('/api/auth/change-password', {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${jwtToken}`
+            },
+            body: JSON.stringify({ current_password, new_password })
+        });
+        
+        if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.detail || 'Password update failed');
+        }
+        
+        if (succEl) {
+            succEl.textContent = 'Password updated successfully!';
+            succEl.style.display = 'block';
+        }
+        currEl.value = '';
+        newEl.value = '';
+        
+        setTimeout(() => {
+            hideChangePwModal();
+        }, 1500);
+    } catch (err) {
+        console.error('Change password error:', err);
+        if (errEl) {
+            errEl.textContent = err.message || 'Change password failed';
+            errEl.style.display = 'block';
+        }
+    }
 }
