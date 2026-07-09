@@ -136,6 +136,7 @@
                     <h2 class="card-title" style="margin-bottom: 0;">Safety thresholds</h2>
                     <div id="auth-status-container" style="display: flex; align-items: center; gap: 8px;">
                         <span id="auth-status-text" class="label-muted" style="font-size: 11px;">🔒 Read-Only (Login to edit)</span>
+                        <button id="btn-change-pw" class="btn-toggle" style="padding: 4px 10px; font-size: 11px; margin: 0; display: none; width: auto; background-color: rgba(255, 255, 255, 0.05); color: var(--text-primary); border-color: var(--border-subtle);" onclick="showChangePwModal()">Change PW</button>
                         <button id="btn-auth" class="btn-toggle" style="padding: 4px 10px; font-size: 11px; margin: 0; display: inline-block; width: auto;" onclick="showLoginModal()">Login</button>
                     </div>
                 </div>
@@ -224,6 +225,27 @@
             </div>
         </section>
 
+    </div>
+
+    <!-- CHANGE PASSWORD MODAL -->
+    <div id="change-pw-modal" class="modal-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(11, 15, 25, 0.85); backdrop-filter: blur(8px); z-index: 1000; align-items: center; justify-content: center;">
+        <div class="card" style="width: 320px; border: 1px solid var(--border-subtle); padding: 24px; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 20px 40px rgba(0,0,0,0.5);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h3 class="card-title" style="margin-bottom: 0; font-size: 18px; color: var(--text-primary);">Change Password</h3>
+                <button onclick="hideChangePwModal()" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; outline: none; padding: 4px;">✕</button>
+            </div>
+            <div id="change-pw-error" class="helper-text" style="color: #ef4444; display: none; font-weight: bold; background: rgba(239, 68, 68, 0.1); padding: 8px; border-radius: 4px; border: 1px solid rgba(239, 68, 68, 0.2);"></div>
+            <div id="change-pw-success" class="helper-text" style="color: #10b981; display: none; font-weight: bold; background: rgba(16, 185, 129, 0.1); padding: 8px; border-radius: 4px; border: 1px solid rgba(16, 185, 129, 0.2);"></div>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                <label for="change-pw-current" class="label-primary" style="font-size: 11px;">Current Password</label>
+                <input type="password" id="change-pw-current" placeholder="Current password" style="background: #0b0f19; color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: 4px; height: 36px; padding: 0 10px; outline: none;">
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                <label for="change-pw-new" class="label-primary" style="font-size: 11px;">New Password</label>
+                <input type="password" id="change-pw-new" placeholder="New password" style="background: #0b0f19; color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: 4px; height: 36px; padding: 0 10px; outline: none;">
+            </div>
+            <button id="btn-change-pw-submit" class="btn-toggle active" style="margin-top: 8px; height: 38px;" onclick="submitChangePw()">Update Password</button>
+        </div>
     </div>
 
     <!-- LOGIN MODAL -->
