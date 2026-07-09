@@ -7,6 +7,9 @@ import glob
 import yaml
 from ultralytics import YOLO
 
+# Append the project workspace root to the python module search path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # =====================================================================
 # GLOBAL CONFIGURATION & FINE-TUNING PARAMETERS
 # =====================================================================

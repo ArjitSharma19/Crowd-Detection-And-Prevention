@@ -38,6 +38,9 @@ import yaml
 import torch
 from ultralytics import YOLO
 
+# Append the project workspace root to the python module search path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # Overall blended average metrics from epoch 60 for comparison
 BLENDED_PRECISION = 0.693
 BLENDED_RECALL = 0.392

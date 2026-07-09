@@ -7,6 +7,10 @@ import torch.nn as nn
 import numpy as np
 import scipy.io as sio
 from torch.utils.data import Dataset, DataLoader
+import sys
+
+# Append the project workspace root to the python module search path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import custom CSRNet modules
 from src.csrnet_model import load_csrnet_model, CSRNet

@@ -14,13 +14,15 @@ class CrowdDetector:
         self.model_type = "general"  # "general" or "crowd"
 
         # Load general detector (standard pretrained model on disk)
-        print("Loading general COCO detector 'yolo11m.pt'...")
-        self.model_general = YOLO("yolo11m.pt")
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        general_model_path = os.path.join(base_dir, "yolo11m.pt")
+        print(f"Loading general COCO detector from '{general_model_path}'...")
+        self.model_general = YOLO(general_model_path)
 
         # Load custom fine-tuned crowd model
-        local_custom_path = os.path.join("models", "yolo11m_best.pt")
+        local_custom_path = os.path.join(base_dir, "models", "yolo11m_best.pt")
         if not os.path.exists(local_custom_path):
-            local_custom_path = os.path.join("models", "best.pt")
+            local_custom_path = os.path.join(base_dir, "models", "best.pt")
             
         if model_path and os.path.exists(model_path):
             print(f"Loading custom crowd weights from {model_path}")

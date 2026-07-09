@@ -26,7 +26,7 @@ from src.density import (
 )
 from src.sahi_detector import run_sahi_detection, SLICE_CONFIG
 from src.tracker import track_frame
-from src.velocity import update_track_history, get_zone_velocity_stats
+from src.velocity import update_track_history, get_zone_velocity_stats, calculate_velocity
 
 app = FastAPI(title="CrowdShield AI Backend")
 
@@ -44,7 +44,12 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # =====================================================================
 # Set to 0 to use your webcam, or a string path to a video file.
 # Example: VIDEO_SOURCE = r"C:\path\to\your\video.mp4"
-VIDEO_SOURCE = r"E:\test_video_4.mp4"
+VIDEO_SOURCE = os.getenv("VIDEO_SOURCE", r"E:\tesr_video_5.mp4")
+
+# Since environment variables are strings, check if it's an integer digit (like "0")
+if isinstance(VIDEO_SOURCE, str) and VIDEO_SOURCE.strip().isdigit():
+    VIDEO_SOURCE = int(VIDEO_SOURCE.strip())
+
 
 # Auto-resolve directory to video file if needed
 if isinstance(VIDEO_SOURCE, str) and os.path.isdir(VIDEO_SOURCE):
@@ -87,7 +92,7 @@ else:
     csrnet_model.eval()
 
 # CSV Logging configuration
-CSV_LOG_PATH = os.path.join(BASE_DIR, "crowd_comparison.csv")
+CSV_LOG_PATH = os.path.join(BASE_DIR, "data", "reports", "crowd_comparison.csv")
 
 def log_counts_to_csv(yolo_count, csrnet_count, model_selected):
     """
@@ -117,6 +122,7 @@ zone_states = {}  # key: (row, col), value: {'logged_tier': 'safe', 'pending_tie
 # Global rolling histories for temporal smoothing
 model_decision_history = []
 count_history = []
+zone_grid_history = []  # Rolling history of zone grids (last 4 frames) for surge calculation
 
 # Global state tracking for person trajectories (ByteTrack)
 track_history_dict = {}
@@ -142,7 +148,7 @@ def process_frame(frame, detection_mode="auto"):
             'boxes': list or None      # List of YOLO bounding boxes (only if YOLO/SAHI was used)
         }
     """
-    global model_decision_history, count_history, track_history_dict
+    global model_decision_history, count_history, track_history_dict, zone_grid_history
     if frame is None:
         return {
             'count': 0.0,
@@ -187,7 +193,8 @@ def process_frame(frame, detection_mode="auto"):
                 frame=frame,
                 slice_height=slice_params["slice_height"],
                 slice_width=slice_params["slice_width"],
-                overlap_ratio=slice_params["overlap_ratio"]
+                overlap_ratio=slice_params["overlap_ratio"],
+                confidence_threshold=detector.confidence_threshold
             )
             ran_sahi = True
             yolo_count = len(yolo_detections)
@@ -219,7 +226,7 @@ def process_frame(frame, detection_mode="auto"):
             for obj in tracked_objects:
                 track_id = obj['track_id']
                 center = obj['center_point']
-                update_track_history(track_id, center, now, track_history_dict, max_history=15)
+                update_track_history(track_id, center, now, track_history_dict, max_history=30)
                 active_ids.add(track_id)
                 
             # Prune trajectories of lost tracks to save memory
@@ -288,15 +295,24 @@ def process_frame(frame, detection_mode="auto"):
         boxes_out = yolo_boxes
         
     # Smooth the count display
-    smoothed_count = get_smoothed_count(selected_count, count_history, window_size=5)
+    smoothed_count = get_smoothed_count(selected_count, count_history, window_size=10)
         
+    # Track history of zone grids for CSRNet density surge calculation (last 4 frames)
+    zone_grid_history.append(zone_grid.copy())
+    while len(zone_grid_history) > 4:
+        zone_grid_history.pop(0)
+
     # 6. Calculate risk scores per zone based on local density limit
     caution_pct = float(alert_manager.caution_at) if hasattr(alert_manager, 'caution_at') else 70.0
-    risk_thresholds = {
-        'caution': (caution_pct / 100.0) * alert_manager.density_limit,
-        'danger': alert_manager.density_limit
-    }
-    risk_per_zone = get_zone_risk_scores(zone_grid, risk_thresholds)
+    risk_per_zone = get_zone_risk_scores(
+        zone_grid=zone_grid,
+        active_model=model_selected,
+        max_people_allowed=alert_manager.max_capacity,
+        caution_threshold=caution_pct,
+        avg_speeds=avg_speeds,
+        dir_variances=dir_variances,
+        previous_zone_grids=zone_grid_history
+    )
     return {
         'count': smoothed_count,
         'zone_grid': zone_grid,
@@ -343,9 +359,14 @@ def draw_grid_overlay(frame, grid, risk_grid):
             text_y = int(r * cell_h + cell_h / 2 + 5)
             
             # Color based on dynamic risk grid
-            if risk == 'danger':
+            if isinstance(risk, dict):
+                risk_tier = risk.get('risk_tier', 'safe')
+            else:
+                risk_tier = risk
+                
+            if risk_tier == 'danger':
                 color = (0, 0, 255) # Red for danger
-            elif risk == 'caution':
+            elif risk_tier == 'caution':
                 color = (0, 255, 255) # Yellow for caution
             else:
                 color = (0, 255, 0) # Green for safe
@@ -372,7 +393,8 @@ def draw_motion_overlays(frame, tracked_objects, history_dict, avg_speeds, dir_v
         y = row * cell_h
         cv2.line(annotated, (0, y), (w, y), (100, 100, 100), 1, cv2.LINE_AA)
         
-    # 2. Draw trajectories (smooth trails) for each person
+    # 2. Draw trajectories (smooth trails) and direction arrows for each person
+    import math
     for track_id, history in history_dict.items():
         if len(history) >= 2:
             points = [item['center'] for item in history]
@@ -381,6 +403,21 @@ def draw_motion_overlays(frame, tracked_objects, history_dict, avg_speeds, dir_v
                 alpha = int(255 * (idx / len(points)))
                 color = (255, alpha, 0)  # Cyan/blue fading trail (BGR)
                 cv2.line(annotated, points[idx], points[idx+1], color, 2, cv2.LINE_AA)
+                
+            # Draw direction arrow showing velocity vector
+            velocity = calculate_velocity(track_id, history_dict)
+            if velocity is not None:
+                speed, angle_deg = velocity
+                if speed > 0.5:  # filter noise for static/still objects
+                    angle_rad = math.radians(angle_deg)
+                    # Dynamically size arrow based on speed (min 15px, max 45px)
+                    arrow_len = max(15, min(45, int(speed * 0.25)))
+                    dx_arrow = int(arrow_len * math.cos(angle_rad))
+                    dy_arrow = int(arrow_len * math.sin(angle_rad))
+                    
+                    latest_center = points[-1]
+                    end_pt = (latest_center[0] + dx_arrow, latest_center[1] + dy_arrow)
+                    cv2.arrowedLine(annotated, latest_center, end_pt, (0, 255, 255), 2, cv2.LINE_AA, tipLength=0.3)
                 
     # 3. Draw bounding boxes + track IDs
     for obj in tracked_objects:
@@ -407,13 +444,18 @@ def draw_motion_overlays(frame, tracked_objects, history_dict, avg_speeds, dir_v
             cx = int(c * cell_w + cell_w / 2)
             cy = int(r * cell_h + cell_h / 2)
             
-            speed_str = f"Spd: {speed:.1f} px/s"
-            var_str = f"Turb: {var:.2f}"
+            speed_str = f"Spd: {speed:.1f} px/s" if speed >= 0 else "Spd: --"
+            var_str = f"Turb: {var:.2f}" if var >= 0 else "Turb: --"
             
             # Set color based on risk status
-            if risk == 'danger':
+            if isinstance(risk, dict):
+                risk_tier = risk.get('risk_tier', 'safe')
+            else:
+                risk_tier = risk
+                
+            if risk_tier == 'danger':
                 color = (0, 0, 255) # Red
-            elif risk == 'caution':
+            elif risk_tier == 'caution':
                 color = (0, 255, 255) # Yellow/Amber
             else:
                 color = (0, 255, 0) # Green
@@ -706,6 +748,72 @@ def frame_generator(mode: str):
                     cv2.putText(processed_frame, "Currently using CSRNet (high density)", (20, 32), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (56, 189, 248), 2, cv2.LINE_AA)
                 
+            # Zone-level alert processing (applies alert_delay and transition logic)
+            now_time = time.time()
+            risk_grid = result['risk_per_zone']
+            if isinstance(risk_grid, np.ndarray):
+                rows_z, cols_z = risk_grid.shape
+                for r_z in range(rows_z):
+                    for c_z in range(cols_z):
+                        zone_key = (r_z, c_z)
+                        zone_num = r_z * cols_z + c_z + 1
+                        cell_data = risk_grid[r_z, c_z]
+                        
+                        if zone_key not in zone_states:
+                            zone_states[zone_key] = {
+                                'logged_tier': 'safe',
+                                'pending_tier': None,
+                                'start_time': None,
+                                'trigger_reason': None
+                            }
+                            
+                        state_z = zone_states[zone_key]
+                        if isinstance(cell_data, dict):
+                            raw_tier = cell_data['risk_tier']
+                            trigger_reason = cell_data['trigger_reason']
+                            capacity_pct = cell_data.get('capacity_pct', 0.0)
+                        else:
+                            raw_tier = cell_data
+                            trigger_reason = 'capacity'
+                            capacity_pct = 0.0
+                        
+                        if raw_tier != state_z['logged_tier']:
+                            if state_z['pending_tier'] != raw_tier:
+                                state_z['pending_tier'] = raw_tier
+                                state_z['start_time'] = now_time
+                                state_z['trigger_reason'] = trigger_reason
+                            
+                            elapsed_z = now_time - state_z['start_time']
+                            delay_threshold_z = float(alert_manager.trigger_delay_seconds)
+                            
+                            if delay_threshold_z <= 0.0 or elapsed_z >= delay_threshold_z:
+                                state_z['logged_tier'] = raw_tier
+                                state_z['pending_tier'] = None
+                                state_z['start_time'] = None
+                                
+                                if raw_tier == 'safe':
+                                    log_msg = f"Zone {zone_num} returned to safe levels"
+                                else:
+                                    zone_limit = alert_manager.max_capacity / 9.0
+                                    zone_people = result['zone_grid'][r_z, c_z]
+                                    
+                                    if trigger_reason == "velocity":
+                                        log_msg = f"Zone {zone_num} showing chaotic movement (direction variance {cell_data['velocity_variance']:.2f}) - crowd instability detected"
+                                    elif trigger_reason == "velocity+speed":
+                                        log_msg = f"Zone {zone_num} critical - fast chaotic movement detected, immediate attention needed"
+                                    elif trigger_reason == "density_surge":
+                                        log_msg = f"Zone {zone_num} density increasing rapidly - crowd filling faster than normal"
+                                    elif trigger_reason == "combined":
+                                        log_msg = f"Zone {zone_num} critical - high capacity and chaotic movement detected"
+                                    else: # capacity
+                                        log_msg = f"Zone {zone_num} at {int(capacity_pct)}% capacity ({int(round(zone_people))} of {int(round(zone_limit))} people) - approaching limit"
+                                
+                                status_for_log = "WARNING" if raw_tier == "caution" else ("CRITICAL" if raw_tier == "danger" else "NORMAL")
+                                alert_manager._add_to_history(status_for_log, log_msg)
+                        else:
+                            state_z['pending_tier'] = None
+                            state_z['start_time'] = None
+
             # Update alerting status (alert_manager runs on the active model's decision output)
             alert_status = alert_manager.update(
                 current_count, 

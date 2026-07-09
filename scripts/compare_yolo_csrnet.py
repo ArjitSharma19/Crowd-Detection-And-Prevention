@@ -51,7 +51,7 @@ if not os.path.exists(CSRNET_MODEL_PATH):
 # =====================================================================
 
 # Append the project workspace root to the python module search path
-sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.detector import CrowdDetector
 from src.csrnet_model import load_csrnet_model
@@ -272,7 +272,7 @@ def main():
     
     excluded_filenames = worst_filenames.union(unlabeled_filenames)
     
-    csv_path = "crowd_comparison_groundtruth_v4.csv"
+    csv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "reports", "crowd_comparison_groundtruth_v4.csv")
     with open(csv_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow([

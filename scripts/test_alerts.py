@@ -6,6 +6,12 @@ and instantaneous status transitions under different configurations.
 
 import unittest
 import time
+import sys
+import os
+
+# Append the project workspace root to the python module search path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.alerts import AlertManager
 
 class TestAlertManager(unittest.TestCase):

@@ -9,6 +9,10 @@ import os
 import cv2
 import torch
 import numpy as np
+import sys
+
+# Append the project workspace root to the python module search path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import custom CSRNet modules
 from src.csrnet_model import load_csrnet_model, CSRNet

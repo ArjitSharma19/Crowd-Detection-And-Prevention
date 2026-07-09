@@ -37,7 +37,7 @@ SLICE_CONFIG = {
 # Global cache for the SAHI AutoDetectionModel instances to avoid reloading weights
 _sahi_model_cache = {}
 
-def run_sahi_detection(model_path, frame, slice_height=512, slice_width=512, overlap_ratio=0.2):
+def run_sahi_detection(model_path, frame, slice_height=512, slice_width=512, overlap_ratio=0.2, confidence_threshold=0.25):
     """
     Runs SAHI (Slicing Aided Hyper Inference) on a frame using a YOLO model.
     SAHI splits the image into slices, runs predictions on each slice, and merges them.
@@ -61,11 +61,13 @@ def run_sahi_detection(model_path, frame, slice_height=512, slice_width=512, ove
         _sahi_model_cache[abs_model_path] = AutoDetectionModel.from_pretrained(
             model_type="yolov8",
             model_path=abs_model_path,
-            confidence_threshold=0.25,
+            confidence_threshold=confidence_threshold,
             device=device
         )
 
     detection_model = _sahi_model_cache[abs_model_path]
+    # Dynamically set threshold to match current dashboard slider setting
+    detection_model.confidence_threshold = confidence_threshold
 
     # Run sliced prediction
     from sahi.predict import get_sliced_prediction

@@ -21,4 +21,10 @@ if __name__ == "__main__":
     os.makedirs("models", exist_ok=True)
     
     # Run FastAPI app via uvicorn
-    uvicorn.run("webapp.main:app", host="127.0.0.1", port=8000, reload=True)
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", 8000))
+    reload = os.getenv("RELOAD", "true").lower() == "true"
+    
+    print(f"Starting server on http://{host}:{port} (reload={reload})...")
+    uvicorn.run("webapp.main:app", host=host, port=port, reload=reload)
+

@@ -24,13 +24,16 @@ def track_frame(model, frame, tracker_state=None, imgsz=960, conf=0.25):
     if frame is None:
         return []
         
-    # Run tracking with ByteTrack configuration
-    # Note: ships with ultralytics under config name "bytetrack.yaml"
-    # Filter class 0 (person)
+    # Resolve the path to custom_bytetrack.yaml in the project root directory
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    custom_tracker_path = os.path.join(base_dir, "custom_bytetrack.yaml")
+    if not os.path.exists(custom_tracker_path):
+        custom_tracker_path = "bytetrack.yaml"  # fallback if file doesn't exist
+        
     results = model.track(
         source=frame, 
         persist=True, 
-        tracker="bytetrack.yaml", 
+        tracker=custom_tracker_path, 
         imgsz=imgsz, 
         conf=conf, 
         classes=[0], 

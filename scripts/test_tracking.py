@@ -9,6 +9,11 @@ import time
 import os
 import numpy as np
 from ultralytics import YOLO
+import sys
+
+# Append the project workspace root to the python module search path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.tracker import track_frame
 from src.velocity import update_track_history, get_zone_velocity_stats
 

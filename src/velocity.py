@@ -38,7 +38,8 @@ def calculate_velocity(track_id, history_dict):
         tuple: (speed, direction_angle_degrees) or None if history is insufficient (< 2 points) or dt <= 0.
                Angle is in range [0, 360) where 0 is right, 90 is down (standard image coordinates).
     """
-    if track_id not in history_dict or len(history_dict[track_id]) < 2:
+    # Require at least 5 frames of history to avoid noisy estimates from short tracks
+    if track_id not in history_dict or len(history_dict[track_id]) < 5:
         return None
         
     history = history_dict[track_id]
@@ -121,7 +122,7 @@ def get_zone_velocity_stats(tracked_objects, history_dict, frame_shape, grid_row
             if cell_speeds:
                 avg_speeds[r][c] = float(np.mean(cell_speeds))
             else:
-                avg_speeds[r][c] = 0.0
+                avg_speeds[r][c] = -1.0  # -1.0 signals insufficient history / empty cell
                 
             if cell_angles:
                 # Compute circular mean vector length (R)
@@ -133,6 +134,6 @@ def get_zone_velocity_stats(tracked_objects, history_dict, frame_shape, grid_row
                 # Circular variance is 1 - R
                 dir_variances[r][c] = float(1.0 - R)
             else:
-                dir_variances[r][c] = 0.0
+                dir_variances[r][c] = -1.0  # -1.0 signals insufficient history / empty cell
                 
     return avg_speeds, dir_variances

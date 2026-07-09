@@ -8,6 +8,10 @@ import torch.nn as nn
 import numpy as np
 import scipy.io as sio
 from torch.utils.data import DataLoader
+import sys
+
+# Append the project workspace root to the python module search path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Use Agg backend for matplotlib to prevent graphical issues in headless environments
 import matplotlib

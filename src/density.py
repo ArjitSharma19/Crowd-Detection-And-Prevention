@@ -356,39 +356,159 @@ def get_smoothed_count(current_count, count_history, window_size=5):
     return float(np.mean(count_history))
 
 
-def get_zone_risk_scores(zone_grid, thresholds):
+# =====================================================================
+# TUNABLE RISK ASSESSMENT THRESHOLDS
+# =====================================================================
+# Threshold for direction variance (turbulence) to identify chaotic crowd movement (0.0 to 1.0)
+HIGH_VARIANCE_THRESHOLD = 0.4  # Tunable: default 0.4 based on tracker velocity variance
+
+# Threshold for average pedestrian speed (in pixels/second) to identify running/panic
+HIGH_SPEED_THRESHOLD = 50.0  # Tunable: default 50 px/s for detecting fast crowd surges/panics
+
+# Threshold for frame-over-frame density growth rate to identify crowd surges (0.20 = 20% increase)
+DENSITY_SURGE_THRESHOLD = 0.20  # Tunable: default 20% increase smoothed over 3 frames
+
+
+def get_zone_risk_scores(zone_grid, active_model, max_people_allowed, caution_threshold=70.0,
+                         avg_speeds=None, dir_variances=None, previous_zone_grids=None):
     """
-    Evaluates a per-zone grid of crowd counts/densities (from either YOLO or CSRNet)
-    and maps each cell to a risk score: "safe", "caution", or "danger".
+    Evaluates a per-zone grid of crowd counts/densities and maps each cell to a risk score:
+    "safe", "caution", or "danger", returned in a structured format containing rich signals.
     
     Args:
-        zone_grid (np.ndarray): 2D array of counts/densities per cell.
-        thresholds (dict): Threshold values for classifying risk levels. Expected format:
-                           {
-                               'caution': float, # Threshold count/density for caution level
-                               'danger': float   # Threshold count/density for danger level
-                           }
-                           
+        zone_grid (np.ndarray): 2D array of shape (3, 3) containing current counts or densities per cell.
+        active_model (str): Active model name ("YOLO", "YOLO + SAHI", "CSRNet").
+        max_people_allowed (int): Total maximum capacity allowed in the space.
+        caution_threshold (float): Total capacity percentage threshold that triggers caution (default 70%).
+        avg_speeds (np.ndarray, optional): 2D array of shape (3, 3) with average pedestrian speeds.
+        dir_variances (np.ndarray, optional): 2D array of shape (3, 3) with pedestrian direction variances.
+        previous_zone_grids (list, optional): List of up to 4 historical 2D zone grids for surge calculation.
+        
     Returns:
-        np.ndarray: A 2D numpy array of strings containing "safe", "caution", or "danger"
-                    corresponding to the risk level of each grid zone.
+        np.ndarray: A 2D numpy array of shape (3, 3) containing dictionaries:
+                    {
+                        'risk_tier': str ("safe", "caution", "danger"),
+                        'trigger_reason': str ("capacity", "velocity", "velocity+speed", "density_surge", "combined"),
+                        'capacity_pct': float,
+                        'velocity_variance': float or None,
+                        'flow_status': str
+                    }
     """
     rows, cols = zone_grid.shape
     risk_grid = np.empty((rows, cols), dtype=object)
     
-    # Fetch threshold values with safe fallback defaults
-    caution_limit = thresholds.get('caution', 3.0)
-    danger_limit = thresholds.get('danger', 6.0)
+    # 1. Calculate per-zone capacity limit (dividing the total limit evenly across the 3x3 grid)
+    # Note: This is a simplification; a real deployment would ideally have per-zone calibrated limits
+    zone_capacity_limit = max(1.0, float(max_people_allowed) / 9.0)
+    
+    # Check if active model is CSRNet
+    is_csrnet = "CSRNet" in active_model
     
     for r in range(rows):
         for c in range(cols):
-            val = zone_grid[r, c]
-            if val >= danger_limit:
-                risk_grid[r, c] = "danger"
-            elif val >= caution_limit:
-                risk_grid[r, c] = "caution"
+            # Zone count/density
+            zone_count = float(zone_grid[r, c])
+            
+            # Calculate capacity percentage
+            capacity_pct = (zone_count / zone_capacity_limit) * 100.0
+            
+            # Base risk tier from capacity alone
+            if capacity_pct >= 100.0:
+                base_tier = "danger"
+            elif capacity_pct >= caution_threshold:
+                base_tier = "caution"
             else:
-                risk_grid[r, c] = "safe"
+                base_tier = "safe"
                 
+            risk_tier = base_tier
+            trigger_reason = "capacity"
+            flow_status = f"Normal (Capacity: {int(capacity_pct)}%)"
+            
+            velocity_variance = None
+            
+            # 2. YOLO-Specific Elevation
+            if not is_csrnet:
+                # Apply velocity-based elevation if stats are available
+                speed = float(avg_speeds[r, c]) if avg_speeds is not None else 0.0
+                var = float(dir_variances[r, c]) if dir_variances is not None else 0.0
+                velocity_variance = var if dir_variances is not None else None
+                
+                # Check if we have velocity data (i.e. non-negative variance and speed, indicating valid tracking exists)
+                # If velocity data is unavailable (signaled by -1.0), we default to base tier from density only.
+                if dir_variances is not None and avg_speeds is not None and speed >= 0.0 and var >= 0.0:
+                    elevated_by_variance = var > HIGH_VARIANCE_THRESHOLD
+                    elevated_by_speed_and_variance = (var > HIGH_VARIANCE_THRESHOLD) and (speed > HIGH_SPEED_THRESHOLD)
+                    
+                    if elevated_by_speed_and_variance:
+                        # Elevate TWO tiers directly to danger regardless of density
+                        risk_tier = "danger"
+                        trigger_reason = "velocity+speed"
+                        flow_status = f"Critical - Fast chaotic movement detected (speed: {speed:.1f} px/s, var: {var:.2f})"
+                    elif elevated_by_variance:
+                        # Elevate one tier
+                        if base_tier == "safe":
+                            risk_tier = "caution"
+                        elif base_tier == "caution":
+                            risk_tier = "danger"
+                        # If base_tier was already danger, it remains danger
+                        
+                        trigger_reason = "combined" if base_tier != "safe" else "velocity"
+                        flow_status = f"Chaotic flow detected (variance: {var:.2f})"
+                    else:
+                        # Velocity data is normal, no elevation
+                        if base_tier == "danger":
+                            flow_status = f"Danger - High occupancy ({int(capacity_pct)}% capacity)"
+                        elif base_tier == "caution":
+                            flow_status = f"Caution - High occupancy ({int(capacity_pct)}% capacity)"
+                        else:
+                            flow_status = f"Normal flow (Capacity: {int(capacity_pct)}%)"
+                else:
+                    # Velocity data is unavailable for this zone
+                    if base_tier == "danger":
+                        flow_status = f"Danger - High occupancy ({int(capacity_pct)}% capacity)"
+                    elif base_tier == "caution":
+                        flow_status = f"Caution - High occupancy ({int(capacity_pct)}% capacity)"
+                    else:
+                        flow_status = f"Normal (Capacity: {int(capacity_pct)}%)"
+                        
+            # 3. CSRNet-Specific Handling (density surge check)
+            else:
+                surge_detected = False
+                # We need at least 4 frames of history to calculate smoothed rate of change over 3 frames
+                if previous_zone_grids is not None and len(previous_zone_grids) >= 4:
+                    cell_history = [float(grid[r, c]) for grid in previous_zone_grids]
+                    
+                    # Smooth over 3 frames:
+                    # Current smoothed density (t, t-1, t-2)
+                    s_curr = np.mean(cell_history[-3:])
+                    # Previous smoothed density (t-1, t-2, t-3)
+                    s_prev = np.mean(cell_history[-4:-1])
+                    
+                    # Calculate rate of change frame-over-frame
+                    # Avoid noise check: only trigger surge if density is meaningful (> 0.5 people)
+                    if s_prev > 0.5:
+                        growth_rate = (s_curr - s_prev) / s_prev
+                        if growth_rate > DENSITY_SURGE_THRESHOLD:
+                            surge_detected = True
+                            risk_tier = "caution" if base_tier == "safe" else "danger"
+                            trigger_reason = "density_surge"
+                            flow_status = f"Surge - Rapid density increase ({growth_rate*100.0:+.1f}% frame-over-frame)"
+                
+                if not surge_detected:
+                    if base_tier == "danger":
+                        flow_status = f"Danger - High density ({int(capacity_pct)}% capacity)"
+                    elif base_tier == "caution":
+                        flow_status = f"Caution - High density ({int(capacity_pct)}% capacity)"
+                    else:
+                        flow_status = f"Stable density (Capacity: {int(capacity_pct)}%)"
+            
+            risk_grid[r, c] = {
+                'risk_tier': risk_tier,
+                'trigger_reason': trigger_reason,
+                'capacity_pct': capacity_pct,
+                'velocity_variance': velocity_variance,
+                'flow_status': flow_status
+            }
+            
     return risk_grid
 
