@@ -6,7 +6,7 @@ import asyncio
 import csv
 from datetime import datetime
 import torch
-from fastapi import FastAPI, Response, Request
+from fastapi import FastAPI, Response, Request, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -27,6 +27,10 @@ from src.density import (
 from src.sahi_detector import run_sahi_detection, SLICE_CONFIG
 from src.tracker import track_frame
 from src.velocity import update_track_history, get_zone_velocity_stats, calculate_velocity
+
+# Database & Auth Imports
+from src.database import init_db, settings_col, log_incident_to_db, users_col
+from src.auth import hash_password, verify_password, create_access_token, require_admin_role
 
 app = FastAPI(title="CrowdShield AI Backend")
 
@@ -93,6 +97,25 @@ else:
 
 # CSV Logging configuration
 CSV_LOG_PATH = os.path.join(BASE_DIR, "data", "reports", "crowd_comparison.csv")
+
+@app.on_event("startup")
+async def startup_event():
+    # Hash default password "admin123" for seeding
+    admin_password_hash = hash_password("admin123")
+    await init_db(admin_password_hash)
+    
+    # Load settings from database
+    db_settings = await settings_col.find_one()
+    if db_settings:
+        alert_manager.max_capacity = db_settings.get("max_capacity", 1000)
+        alert_manager.caution_at = db_settings.get("caution_at", 70)
+        alert_manager.trigger_delay_seconds = db_settings.get("trigger_delay_seconds", 20.0)
+        detector.confidence_threshold = db_settings.get("confidence_threshold", 0.25)
+        detector.imgsz = db_settings.get("imgsz", 960)
+        detector.model_type = db_settings.get("model_type", "general")
+        global current_detection_mode
+        current_detection_mode = db_settings.get("detection_mode", "auto")
+        print("FastAPI: Loaded configuration parameters from MongoDB successfully.")
 
 def log_counts_to_csv(yolo_count, csrnet_count, model_selected):
     """
@@ -506,6 +529,15 @@ class ConfigPayload(BaseModel):
     model_type: str
     detection_mode: str = "auto"
 
+class LoginPayload(BaseModel):
+    username: str
+    password: str
+
+class RegisterPayload(BaseModel):
+    username: str
+    password: str
+    role: str = "operator"
+
 @app.get("/")
 async def get_dashboard(request: Request):
     """
@@ -563,9 +595,9 @@ async def get_current_status():
     }
 
 @app.post("/api/config")
-async def update_config(payload: ConfigPayload):
+async def update_config(payload: ConfigPayload, current_user: dict = Depends(require_admin_role)):
     """
-    Updates warning limits dynamically.
+    Updates warning limits dynamically and persists them to MongoDB.
     """
     global current_detection_mode
     alert_manager.max_capacity = payload.max_capacity
@@ -575,7 +607,61 @@ async def update_config(payload: ConfigPayload):
     detector.imgsz = payload.imgsz
     detector.model_type = payload.model_type
     current_detection_mode = payload.detection_mode
+    
+    # Persist config to database
+    await settings_col.update_one(
+        {},
+        {"$set": {
+            "max_capacity": payload.max_capacity,
+            "caution_at": payload.caution_at,
+            "trigger_delay_seconds": payload.trigger_delay,
+            "confidence_threshold": payload.confidence_threshold,
+            "imgsz": payload.imgsz,
+            "model_type": payload.model_type,
+            "detection_mode": payload.detection_mode
+        }}
+    )
+    print("FastAPI: Configuration parameters persisted to MongoDB.")
     return {"status": "success", "config": payload}
+
+@app.post("/api/auth/login")
+async def login(payload: LoginPayload):
+    """
+    Validates user credentials and returns a signed JWT access token.
+    """
+    user = await users_col.find_one({"username": payload.username})
+    if not user or not verify_password(payload.password, user["password_hash"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password"
+        )
+    # Generate token
+    token = create_access_token(data={"sub": user["username"], "role": user["role"]})
+    return {"access_token": token, "token_type": "bearer", "role": user["role"]}
+
+@app.post("/api/auth/register")
+async def register(payload: RegisterPayload, current_user: dict = Depends(require_admin_role)):
+    """
+    Registers a new user (Admin-only).
+    """
+    existing = await users_col.find_one({"username": payload.username})
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already registered"
+        )
+    if payload.role not in ("admin", "operator"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid role, must be 'admin' or 'operator'"
+        )
+    new_user = {
+        "username": payload.username,
+        "password_hash": hash_password(payload.password),
+        "role": payload.role
+    }
+    await users_col.insert_one(new_user)
+    return {"status": "success", "username": payload.username}
 
 # Simulated crowd coordinates for generator fallback
 simulated_people = []
@@ -810,6 +896,16 @@ def frame_generator(mode: str):
                                 
                                 status_for_log = "WARNING" if raw_tier == "caution" else ("CRITICAL" if raw_tier == "danger" else "NORMAL")
                                 alert_manager._add_to_history(status_for_log, log_msg)
+                                
+                                # Log safety incident to MongoDB in the background
+                                asyncio.get_event_loop().create_task(
+                                    log_incident_to_db(
+                                        zone_id=zone_num,
+                                        risk_tier=raw_tier,
+                                        flow_status=log_msg,
+                                        trigger_reason=trigger_reason
+                                    )
+                                )
                         else:
                             state_z['pending_tier'] = None
                             state_z['start_time'] = None
