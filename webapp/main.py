@@ -538,6 +538,10 @@ class RegisterPayload(BaseModel):
     password: str
     role: str = "operator"
 
+class ChangePasswordPayload(BaseModel):
+    current_password: str
+    new_password: str
+
 @app.get("/")
 async def get_dashboard(request: Request):
     """
@@ -662,6 +666,23 @@ async def register(payload: RegisterPayload, current_user: dict = Depends(requir
     }
     await users_col.insert_one(new_user)
     return {"status": "success", "username": payload.username}
+
+@app.post("/api/auth/change-password")
+async def change_password(payload: ChangePasswordPayload, current_user: dict = Depends(require_admin_role)):
+    """
+    Changes the logged-in administrator's password.
+    """
+    if not verify_password(payload.current_password, current_user["password_hash"]):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Incorrect current password"
+        )
+    new_hash = hash_password(payload.new_password)
+    await users_col.update_one(
+        {"username": current_user["username"]},
+        {"$set": {"password_hash": new_hash}}
+    )
+    return {"status": "success", "message": "Password changed successfully"}
 
 # Simulated crowd coordinates for generator fallback
 simulated_people = []
