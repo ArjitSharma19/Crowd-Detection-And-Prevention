@@ -5,6 +5,8 @@
 // Global State
 let currentViewMode = 'raw';
 let currentCount = 0;
+let jwtToken = localStorage.getItem('crowdshield_token') || null;
+let userRole = localStorage.getItem('crowdshield_role') || null;
 
 const thresholds = {
     maxPeople: 1000,
@@ -45,6 +47,9 @@ const selectModelType = document.getElementById('select-model-type');
 
 // Initialize Dashboard
 document.addEventListener('DOMContentLoaded', () => {
+    // Update Auth UI immediately on load
+    updateAuthUI();
+
     // 1. Fetch initial configuration from backend and sync UI
     syncConfigFromBackend().then(() => {
         // 2. Setup Threshold control listeners
@@ -133,6 +138,10 @@ async function syncConfigFromBackend() {
 }
 
 async function sendConfigUpdate() {
+    if (!jwtToken) {
+        showLoginModal();
+        return;
+    }
     const payload = {
         max_capacity: thresholds.maxPeople,
         caution_at: parseInt(thresholds.cautionAt),
@@ -146,9 +155,17 @@ async function sendConfigUpdate() {
     try {
         const response = await fetch('/api/config', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${jwtToken}`
+            },
             body: JSON.stringify(payload)
         });
+        if (response.status === 401 || response.status === 403) {
+            logout();
+            showLoginModal();
+            throw new Error('Session unauthorized or expired. Logged out.');
+        }
         if (!response.ok) throw new Error('Failed to update config');
         const data = await response.json();
         console.log('Backend config updated successfully:', data.config);
@@ -441,4 +458,118 @@ function setupSliders() {
             sendConfigUpdate();
         });
     }
+}
+
+// ----------------------------------------------------
+// AUTHENTICATION AND MODAL ACTIONS
+// ----------------------------------------------------
+function updateAuthUI() {
+    const elAuthText = document.getElementById('auth-status-text');
+    const elAuthBtn = document.getElementById('btn-auth');
+    if (jwtToken) {
+        if (elAuthText) elAuthText.textContent = `🔓 Admin Mode (${userRole})`;
+        if (elAuthBtn) elAuthBtn.textContent = 'Logout';
+        setSlidersEnabled(true);
+    } else {
+        if (elAuthText) elAuthText.textContent = '🔒 Read-Only (Login to edit)';
+        if (elAuthBtn) elAuthBtn.textContent = 'Login';
+        setSlidersEnabled(false);
+    }
+}
+
+function setSlidersEnabled(enabled) {
+    const sliders = [sliderMaxPeople, sliderCautionAt, sliderAlertDelay, sliderConfidence, sliderResolution, selectModelType];
+    sliders.forEach(slider => {
+        if (slider) slider.disabled = !enabled;
+    });
+    
+    const detButtons = ['btn-det-auto', 'btn-det-yolo', 'btn-det-csrnet'];
+    detButtons.forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) {
+            if (enabled) {
+                btn.style.pointerEvents = 'auto';
+                btn.style.opacity = '1';
+            } else {
+                btn.style.pointerEvents = 'none';
+                btn.style.opacity = '0.5';
+            }
+        }
+    });
+}
+
+window.showLoginModal = function() {
+    if (jwtToken) {
+        logout();
+    } else {
+        const errorEl = document.getElementById('login-error');
+        if (errorEl) errorEl.style.display = 'none';
+        document.getElementById('login-modal').style.display = 'flex';
+    }
+}
+
+window.hideLoginModal = function() {
+    document.getElementById('login-modal').style.display = 'none';
+}
+
+window.submitLogin = async function() {
+    const usernameEl = document.getElementById('login-username');
+    const passwordEl = document.getElementById('login-password');
+    const errorEl = document.getElementById('login-error');
+    
+    if (!usernameEl || !passwordEl) return;
+    
+    const username = usernameEl.value.trim();
+    const password = passwordEl.value;
+    
+    if (!username || !password) {
+        if (errorEl) {
+            errorEl.textContent = 'Username and password are required.';
+            errorEl.style.display = 'block';
+        }
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        
+        if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.detail || 'Invalid credentials');
+        }
+        
+        const data = await response.json();
+        jwtToken = data.access_token;
+        userRole = data.role;
+        
+        localStorage.setItem('crowdshield_token', jwtToken);
+        localStorage.setItem('crowdshield_role', userRole);
+        
+        usernameEl.value = '';
+        passwordEl.value = '';
+        if (errorEl) errorEl.style.display = 'none';
+        
+        hideLoginModal();
+        updateAuthUI();
+        console.log('Login successful as role:', userRole);
+    } catch (err) {
+        console.error('Login error:', err);
+        if (errorEl) {
+            errorEl.textContent = err.message || 'Login failed';
+            errorEl.style.display = 'block';
+        }
+    }
+}
+
+window.logout = function() {
+    jwtToken = null;
+    userRole = null;
+    localStorage.removeItem('crowdshield_token');
+    localStorage.removeItem('crowdshield_role');
+    updateAuthUI();
+    console.log('Logged out successfully.');
 }
