@@ -31,7 +31,7 @@ SLICE_CONFIG = {
         "slice_height": 384,
         "slice_width": 384,
         "overlap_ratio": 0.4,
-        "imgsz": 512
+        "imgsz": 768
     }
 }
 
