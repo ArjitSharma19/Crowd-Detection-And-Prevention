@@ -21,7 +21,15 @@
                 <span class="label-muted" style="font-size: 10px; margin-bottom: 0;">Live monitoring</span>
             </div>
         </div>
-        <div class="header-right">
+        <div class="header-right" style="display: flex; align-items: center; gap: 12px;">
+            <button id="btn-guide" class="btn-toggle" style="padding: 6px 14px; font-size: 11px; margin: 0; display: inline-flex; align-items: center; gap: 6px; width: auto; background-color: rgba(56, 189, 248, 0.1); border-color: rgba(56, 189, 248, 0.3); color: #38bdf8;" onclick="showGuideModal()">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+                System Guide
+            </button>
             <!-- Status Pill: color and text updated dynamically by JS -->
             <div id="status-pill" class="status-pill safe">
                 <span class="pulse-dot"></span>
@@ -265,6 +273,71 @@
                 <input type="password" id="login-password" placeholder="Enter password" style="background: #0b0f19; color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: 4px; height: 36px; padding: 0 10px; outline: none;">
             </div>
             <button id="btn-login-submit" class="btn-toggle active" style="margin-top: 8px; height: 38px;" onclick="submitLogin()">Submit</button>
+        </div>
+    </div>
+
+    <!-- SYSTEM GUIDE MODAL -->
+    <div id="guide-modal" class="modal-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(11, 15, 25, 0.85); backdrop-filter: blur(8px); z-index: 1000; align-items: center; justify-content: center;" onclick="if(event.target === this) hideGuideModal()">
+        <div class="card" style="width: 500px; max-width: 90%; max-height: 85vh; overflow-y: auto; border: 1px solid var(--border-subtle); padding: 24px; display: flex; flex-direction: column; gap: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.5);">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-subtle); padding-bottom: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                    <h3 class="card-title" style="margin-bottom: 0; font-size: 18px; color: var(--text-primary);">System Operator Guide</h3>
+                </div>
+                <button onclick="hideGuideModal()" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; outline: none; padding: 4px; transition: color 0.2s;" onmouseover="this.style.color='var(--text-primary)'" onmouseout="this.style.color='var(--text-muted)'">✕</button>
+            </div>
+            
+            <div style="display: flex; flex-direction: column; gap: 16px; font-size: 13px; line-height: 1.6; color: var(--text-muted);">
+                
+                <!-- Section: Detection Modes -->
+                <div>
+                    <h4 style="color: var(--text-primary); font-size: 14px; margin: 0 0 6px 0; display: flex; align-items: center; gap: 6px;">
+                        <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #38bdf8;"></span>
+                        Detection Modes
+                    </h4>
+                    <ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px;">
+                        <li><strong>Auto (Recommended)</strong>: Dynamically switches models. It uses YOLO + SAHI for standard counting, and automatically shifts to CSRNet if crowd density or occlusions exceed safety margins.</li>
+                        <li><strong>YOLO</strong>: Fast, individual bounding box detection. Best for sparse/low crowds (up to 30 people) and real-time tracking (30+ FPS).</li>
+                        <li><strong>CSRNet</strong>: Highly accurate density map estimation. Best for dense/overlapping crowds (30+ people) or top-down angles (e.g. staircases, concert arenas).</li>
+                    </ul>
+                </div>
+
+                <!-- Section: View Modes -->
+                <div>
+                    <h4 style="color: var(--text-primary); font-size: 14px; margin: 0 0 6px 0; display: flex; align-items: center; gap: 6px;">
+                        <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #38bdf8;"></span>
+                        View Modes
+                    </h4>
+                    <ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px;">
+                        <li><strong>Raw box</strong>: Displays standard camera footage with blue bounding boxes drawn around detected individuals.</li>
+                        <li><strong>Heatmap</strong>: Shows continuous color-graded density mapping. Red/orange highlights indicate dangerous bottleneck areas (best used with CSRNet).</li>
+                        <li><strong>Grid cell</strong>: Overlays a 3x3 safety grid on the screen. Each cell lights up green, yellow, or red based on localized crowd capacity limits.</li>
+                        <li><strong>Motion flow</strong>: Renders direction vectors showing the average walking velocity of the crowd, useful for identifying escape bottlenecks.</li>
+                    </ul>
+                </div>
+
+                <!-- Section: Camera Environments -->
+                <div>
+                    <h4 style="color: var(--text-primary); font-size: 14px; margin: 0 0 6px 0; display: flex; align-items: center; gap: 6px;">
+                        <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #38bdf8;"></span>
+                        Camera Environments
+                    </h4>
+                    <ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px;">
+                        <li><strong>General</strong>: Configured for standard low-to-mid range security feeds or indoor room cameras.</li>
+                        <li><strong>Venue</strong>: Configured for large spaces like stadiums, ticket plazas, or corridors where wide coverage is needed.</li>
+                        <li><strong>Aerial</strong>: Optimized for overhead drone cameras or high-altitude security mounts looking straight down at tiny targets.</li>
+                    </ul>
+                </div>
+
+            </div>
+            
+            <div style="display: flex; justify-content: flex-end; border-top: 1px solid var(--border-subtle); padding-top: 12px;">
+                <button class="btn-toggle active" style="width: auto; padding: 8px 16px;" onclick="hideGuideModal()">Got it</button>
+            </div>
         </div>
     </div>
 

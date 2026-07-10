@@ -501,6 +501,14 @@ function setSlidersEnabled(enabled) {
     });
 }
 
+window.showGuideModal = function() {
+    document.getElementById('guide-modal').style.display = 'flex';
+}
+
+window.hideGuideModal = function() {
+    document.getElementById('guide-modal').style.display = 'none';
+}
+
 window.showLoginModal = function() {
     if (jwtToken) {
         logout();
