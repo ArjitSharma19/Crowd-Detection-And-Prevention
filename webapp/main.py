@@ -144,8 +144,7 @@ zone_states = {}  # key: (row, col), value: {'logged_tier': 'safe', 'pending_tie
 
 # Global rolling histories for temporal smoothing
 model_decision_history = []
-count_display_history = []
-count_switch_history = []
+count_history = []
 zone_grid_history = []  # Rolling history of zone grids (last 4 frames) for surge calculation
 
 # Global state tracking for person trajectories (ByteTrack)
@@ -172,7 +171,7 @@ def process_frame(frame, detection_mode="auto"):
             'boxes': list or None      # List of YOLO bounding boxes (only if YOLO/SAHI was used)
         }
     """
-    global model_decision_history, count_display_history, count_switch_history, track_history_dict, zone_grid_history
+    global model_decision_history, count_history, track_history_dict, zone_grid_history
     if frame is None:
         return {
             'count': 0.0,
@@ -212,38 +211,14 @@ def process_frame(frame, detection_mode="auto"):
                 yolo_path = os.path.join(BASE_DIR, "models", "best.pt")
             if not os.path.exists(yolo_path):
                 yolo_path = "yolo11m.pt"
-            
-            # Resolve target imgsz from slice configuration or fallback to detector setting
-            target_imgsz = slice_params.get("imgsz", detector.imgsz)
-            orig_h, orig_w = frame.shape[:2]
-            
-            if target_imgsz and (orig_h != target_imgsz or orig_w != target_imgsz):
-                sahi_frame = cv2.resize(frame, (target_imgsz, target_imgsz), interpolation=cv2.INTER_LINEAR)
-            else:
-                sahi_frame = frame
-                
             yolo_detections = run_sahi_detection(
                 model_path=yolo_path,
-                frame=sahi_frame,
+                frame=frame,
                 slice_height=slice_params["slice_height"],
                 slice_width=slice_params["slice_width"],
                 overlap_ratio=slice_params["overlap_ratio"],
                 confidence_threshold=detector.confidence_threshold
             )
-            
-            # Scale coordinates back to original frame size if resized
-            if target_imgsz and (orig_h != target_imgsz or orig_w != target_imgsz):
-                scale_x = orig_w / target_imgsz
-                scale_y = orig_h / target_imgsz
-                for det in yolo_detections:
-                    box = det['bbox']
-                    det['bbox'] = [
-                        int(box[0] * scale_x),
-                        int(box[1] * scale_y),
-                        int(box[2] * scale_x),
-                        int(box[3] * scale_y)
-                    ]
-            
             ran_sahi = True
             yolo_count = len(yolo_detections)
             yolo_boxes = [det['bbox'] for det in yolo_detections]
@@ -294,9 +269,6 @@ def process_frame(frame, detection_mode="auto"):
                 grid_cols=3
             )
         
-    # Smooth raw YOLO count specifically for the model switching decision
-    smoothed_yolo_count = get_smoothed_count(float(yolo_count), count_switch_history, window_size=10)
-
     # 2. Determine which model output to trust.
     if detection_mode == "csrnet":
         use_csrnet = True
@@ -304,9 +276,9 @@ def process_frame(frame, detection_mode="auto"):
         use_csrnet = False
     else: # auto
         use_csrnet = get_smoothed_model_decision(
-            yolo_count=smoothed_yolo_count, 
-            yolo_boxes=yolo_boxes, 
-            decision_history=model_decision_history, 
+            yolo_count, 
+            yolo_boxes, 
+            model_decision_history, 
             window_size=10,
             detection_mode=detection_mode
         )
@@ -323,8 +295,8 @@ def process_frame(frame, detection_mode="auto"):
     
     # 4. Log comparative metrics to CSV
     raw_use_csrnet = should_use_csrnet(
-        yolo_count=smoothed_yolo_count, 
-        yolo_boxes=yolo_boxes, 
+        yolo_count, 
+        yolo_boxes, 
         threshold=50, 
         overlap_threshold=0.3,
         detection_mode=detection_mode
@@ -345,8 +317,8 @@ def process_frame(frame, detection_mode="auto"):
         heatmap_image = None
         boxes_out = yolo_boxes
         
-    # Smooth the count display with a smaller, highly responsive window size (5)
-    smoothed_count = get_smoothed_count(selected_count, count_display_history, window_size=5)
+    # Smooth the count display
+    smoothed_count = get_smoothed_count(selected_count, count_history, window_size=10)
         
     # Track history of zone grids for CSRNet density surge calculation (last 4 frames)
     zone_grid_history.append(zone_grid.copy())

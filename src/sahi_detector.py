@@ -30,8 +30,7 @@ SLICE_CONFIG = {
     "aerial": {
         "slice_height": 384,
         "slice_width": 384,
-        "overlap_ratio": 0.4,
-        "imgsz": 768
+        "overlap_ratio": 0.3
     }
 }
 
