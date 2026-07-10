@@ -211,14 +211,38 @@ def process_frame(frame, detection_mode="auto"):
                 yolo_path = os.path.join(BASE_DIR, "models", "best.pt")
             if not os.path.exists(yolo_path):
                 yolo_path = "yolo11m.pt"
+            
+            # Resolve target imgsz from slice configuration or fallback to detector setting
+            target_imgsz = slice_params.get("imgsz", detector.imgsz)
+            orig_h, orig_w = frame.shape[:2]
+            
+            if target_imgsz and (orig_h != target_imgsz or orig_w != target_imgsz):
+                sahi_frame = cv2.resize(frame, (target_imgsz, target_imgsz), interpolation=cv2.INTER_LINEAR)
+            else:
+                sahi_frame = frame
+                
             yolo_detections = run_sahi_detection(
                 model_path=yolo_path,
-                frame=frame,
+                frame=sahi_frame,
                 slice_height=slice_params["slice_height"],
                 slice_width=slice_params["slice_width"],
                 overlap_ratio=slice_params["overlap_ratio"],
                 confidence_threshold=detector.confidence_threshold
             )
+            
+            # Scale coordinates back to original frame size if resized
+            if target_imgsz and (orig_h != target_imgsz or orig_w != target_imgsz):
+                scale_x = orig_w / target_imgsz
+                scale_y = orig_h / target_imgsz
+                for det in yolo_detections:
+                    box = det['bbox']
+                    det['bbox'] = [
+                        int(box[0] * scale_x),
+                        int(box[1] * scale_y),
+                        int(box[2] * scale_x),
+                        int(box[3] * scale_y)
+                    ]
+            
             ran_sahi = True
             yolo_count = len(yolo_detections)
             yolo_boxes = [det['bbox'] for det in yolo_detections]
