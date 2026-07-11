@@ -176,4 +176,33 @@ The dashboard features an automated **Alert Manager** (`src/alerts.py`) that mon
 - **High Local Density**: Triggers warning if any single grid cell count exceeds the local limit.
 - **Sustained Warning Alerting**: If warnings persist beyond the trigger delay (default `3` seconds), the status escalates to **CRITICAL**, appending incident details directly into the dashboard's live logs.
 
+---
+
+## 🚀 Production Safety & Security Upgrades
+
+CrowdShield AI is updated with enterprise-grade features for security, reliability, and proactive threat prevention:
+
+### 🔒 MongoDB Persistence & JWT Authentication
+* **Admin Authentication**: A secure login modal protects safety configurations (such as Max Capacity, Caution Thresholds, and Model Selection). Non-authenticated users can view the dashboard in a safe **Read-Only / Operator Mode**.
+* **JWT Access Tokens**: Access control is managed via encrypted JSON Web Tokens (JWT) stored in browser storage.
+* **Persistent Settings**: Configurations are stored in a persistent **MongoDB** collection rather than volatile system memory. When the server restarts, configurations are reloaded automatically.
+* **Incident Persistence**: Critical safety escalations are asynchronously logged directly to the MongoDB `incidents` database in addition to CSV files.
+
+### 📈 Trend-Based Predictive Crowd Warnings
+* **Rate of Change Tracking**: Maintains a sliding 60-second temporal history of count data to calculate crowd growth rates (`fill_rate` in people/minute) using a 3-sample sliding average window.
+* **Time-to-Capacity Forecasts**: Estimates how many minutes remain before capacity thresholds are crossed: `time_to_capacity = (max_capacity - current_count) / fill_rate` (capped at 60.0 mins).
+* **Predictive Alert Tiers**:
+  * **Early Warning** (Amber): Triggered when crowd growth exceeds `2.0 people/min` and estimated time to capacity is `< 10.0 minutes`.
+  * **Urgent Warning** (Amber): Triggered when crowd growth exceeds `5.0 people/min` and estimated time to capacity is `< 5.0 minutes`.
+  * **Critical Prediction** (Red): Triggered when estimated time to capacity drops below `2.0 minutes` regardless of growth rate.
+* **Sustained Alarm Delay**: Trend warnings must be sustained for `10` seconds before triggering, filtering out brief transient spikes.
+* **UI Trend Indicators**: The dashboard displays live visual cues under the capacity progress bar (`↑ +{rate} people/min · ~{time} min` in Amber/Red, or `↓ Crowd dispersing` in Green).
+
+### 📘 Interactive System Operator Guide
+* A clickable **System Guide** modal overlay provides immediate onboarding for operators, explaining:
+  * **Detection Modes**: Dynamic switching behaviors between YOLO and CSRNet models.
+  * **View Modes**: Visual rendering differences across raw bounding boxes, grid cell highlights, motion flow vectors, and hot-spot density maps.
+  * **Camera Environments**: Preconfigured spatial bounding coordinates for General, Venue, and Aerial drone feeds.
+
+
 
