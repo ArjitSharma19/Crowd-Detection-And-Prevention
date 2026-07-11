@@ -117,7 +117,7 @@ async def startup_event():
         current_detection_mode = db_settings.get("detection_mode", "auto")
         print("FastAPI: Loaded configuration parameters from MongoDB successfully.")
 
-def log_counts_to_csv(yolo_count, csrnet_count, model_selected):
+def log_counts_to_csv(yolo_count, csrnet_count, model_selected, fill_rate=0.0, time_to_capacity=60.0):
     """
     Logs comparison metrics to a CSV file.
     """
@@ -127,9 +127,9 @@ def log_counts_to_csv(yolo_count, csrnet_count, model_selected):
             writer = csv.writer(f)
             if not file_exists:
                 # Write header if file is new
-                writer.writerow(['timestamp', 'yolo_count', 'csrnet_count', 'which_model_selected'])
+                writer.writerow(['timestamp', 'yolo_count', 'csrnet_count', 'which_model_selected', 'fill_rate', 'time_to_capacity'])
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-            writer.writerow([timestamp, yolo_count, csrnet_count, model_selected])
+            writer.writerow([timestamp, yolo_count, csrnet_count, model_selected, round(fill_rate, 2), round(time_to_capacity, 2)])
     except Exception as e:
         print(f"Failed to write to CSV log: {e}")
 
@@ -146,6 +146,34 @@ zone_states = {}  # key: (row, col), value: {'logged_tier': 'safe', 'pending_tie
 model_decision_history = []
 count_history = []
 zone_grid_history = []  # Rolling history of zone grids (last 4 frames) for surge calculation
+
+# =====================================================================
+# TREND-BASED ALERT CONSTANTS
+# =====================================================================
+# Threshold constants for predictive crowd warnings
+TREND_RATE_EARLY = 2.0       # crowd growth rate in people/min to trigger early warning
+TREND_RATE_URGENT = 5.0      # crowd growth rate in people/min to trigger urgent warning
+TREND_TIME_EARLY = 10.0      # minutes left to capacity for early warning
+TREND_TIME_URGENT = 5.0      # minutes left to capacity for urgent warning
+TREND_TIME_CRITICAL = 2.0    # minutes left to capacity for critical warning
+TREND_SUSTAINED_DELAY = 10.0 # seconds trend must be sustained before alerting
+TREND_LOG_INTERVAL = 30.0    # maximum frequency in seconds for re-firing active trend logs
+TREND_RESOLUTION_RATE = 1.0  # fill rate in people/min below which the trend is considered stabilized
+# =====================================================================
+
+# Global rolling history specifically for trend analysis (timestamp, smoothed_count)
+trend_history_deque = []
+# Global smoothed rate history (last 3 samples)
+fill_rate_history = []
+# Global model tracking to reset trend history on switches
+last_model_used = None
+
+# Global trend alert state machine tracking
+trend_alert_status = "NORMAL"  # "NORMAL", "EARLY", "URGENT", "CRITICAL"
+pending_trend_status = None
+trend_transition_since = None
+last_trend_alert_fired_at = 0.0
+last_trend_message = ""
 
 # Global state tracking for person trajectories (ByteTrack)
 track_history_dict = {}
@@ -172,6 +200,8 @@ def process_frame(frame, detection_mode="auto"):
         }
     """
     global model_decision_history, count_history, track_history_dict, zone_grid_history
+    global trend_history_deque, fill_rate_history, last_model_used
+    global trend_alert_status, pending_trend_status, trend_transition_since, last_trend_alert_fired_at, last_trend_message
     if frame is None:
         return {
             'count': 0.0,
@@ -302,7 +332,6 @@ def process_frame(frame, detection_mode="auto"):
         detection_mode=detection_mode
     )
     raw_model_selected = "CSRNet" if raw_use_csrnet else ("YOLO + SAHI" if ran_sahi else "YOLO")
-    log_counts_to_csv(yolo_count, csrnet_count, raw_model_selected)
     
     # 5. Build selected model's zone grid (3x3 grid)
     grid_rows, grid_cols = 3, 3
@@ -324,6 +353,115 @@ def process_frame(frame, detection_mode="auto"):
     zone_grid_history.append(zone_grid.copy())
     while len(zone_grid_history) > 4:
         zone_grid_history.pop(0)
+
+    # =====================================================================
+    # RATE OF CHANGE & TIME-TO-CAPACITY FORECASTING
+    # =====================================================================
+    global trend_history_deque, fill_rate_history, last_model_used
+    global trend_alert_status, pending_trend_status, trend_transition_since, last_trend_alert_fired_at, last_trend_message
+    
+    # Reset history on model transitions
+    if model_selected != last_model_used:
+        trend_history_deque = []
+        fill_rate_history = []
+        last_model_used = model_selected
+        
+    now = time.time()
+    trend_history_deque.append((now, smoothed_count))
+    
+    # Keep last 60 seconds of history
+    while len(trend_history_deque) > 0 and (now - trend_history_deque[0][0]) > 60.0:
+        trend_history_deque.pop(0)
+        
+    fill_rate = 0.0
+    time_to_capacity = 60.0
+    
+    # Calculate trend if at least 15 seconds of history exists
+    if len(trend_history_deque) >= 2 and (trend_history_deque[-1][0] - trend_history_deque[0][0]) >= 15.0:
+        elapsed_seconds = trend_history_deque[-1][0] - trend_history_deque[0][0]
+        if elapsed_seconds > 0.0:
+            raw_fill_rate = (trend_history_deque[-1][1] - trend_history_deque[0][1]) * 60.0 / elapsed_seconds
+            
+            # Smooth the rate over last 3 samples
+            fill_rate_history.append(raw_fill_rate)
+            if len(fill_rate_history) > 3:
+                fill_rate_history.pop(0)
+            fill_rate = sum(fill_rate_history) / len(fill_rate_history)
+            
+    max_people = float(alert_manager.max_capacity) if alert_manager.max_capacity > 0 else 1.0
+    if fill_rate > 0.0:
+        remaining_capacity = max_people - smoothed_count
+        if remaining_capacity <= 0.0:
+            time_to_capacity = 0.0
+        else:
+            time_to_capacity = remaining_capacity / fill_rate
+            if time_to_capacity > 60.0:
+                time_to_capacity = 60.0
+    else:
+        time_to_capacity = 60.0
+        
+    # Get capacity risk tier for early warning checks
+    capacity_percentage = (smoothed_count / max_people) * 100.0
+    capacity_risk_tier = alert_manager.get_risk_tier(capacity_percentage)
+    
+    # Evaluate raw trend tier
+    raw_trend_tier = "NORMAL"
+    if fill_rate >= TREND_RESOLUTION_RATE:
+        if time_to_capacity < TREND_TIME_CRITICAL:
+            raw_trend_tier = "CRITICAL"
+        elif fill_rate > TREND_RATE_URGENT and time_to_capacity < TREND_TIME_URGENT:
+            raw_trend_tier = "URGENT"
+        elif fill_rate > TREND_RATE_EARLY and time_to_capacity < TREND_TIME_EARLY and capacity_risk_tier == "safe":
+            raw_trend_tier = "EARLY"
+            
+    # State transition validation (must be sustained for 10 seconds)
+    if raw_trend_tier != trend_alert_status:
+        if pending_trend_status == raw_trend_tier:
+            if now - trend_transition_since >= TREND_SUSTAINED_DELAY:
+                old_trend_status = trend_alert_status
+                trend_alert_status = raw_trend_tier
+                pending_trend_status = None
+                trend_transition_since = None
+                
+                log_msg = None
+                if trend_alert_status == "EARLY":
+                    log_msg = f"Crowd filling rapidly — estimated {time_to_capacity:.1f} minutes to capacity at current rate"
+                elif trend_alert_status == "URGENT":
+                    log_msg = f"Crowd approaching capacity fast — {time_to_capacity:.1f} minutes remaining, consider intervention"
+                elif trend_alert_status == "CRITICAL":
+                    log_msg = f"Capacity will be reached in under 2 minutes — immediate action needed"
+                elif trend_alert_status == "NORMAL":
+                    if old_trend_status != "NORMAL":
+                        log_msg = "Crowd growth has slowed - situation stabilising"
+                        
+                if log_msg:
+                    alert_manager._add_to_history(trend_alert_status, log_msg)
+                    last_trend_alert_fired_at = now
+                    last_trend_message = log_msg
+        else:
+            pending_trend_status = raw_trend_tier
+            trend_transition_since = now
+    else:
+        pending_trend_status = None
+        trend_transition_since = None
+        
+    # Re-fire/update logs every 30 seconds
+    if trend_alert_status != "NORMAL" and (now - last_trend_alert_fired_at) >= TREND_LOG_INTERVAL:
+        log_msg = None
+        if trend_alert_status == "EARLY":
+            log_msg = f"Crowd filling rapidly — estimated {time_to_capacity:.1f} minutes to capacity at current rate"
+        elif trend_alert_status == "URGENT":
+            log_msg = f"Crowd approaching capacity fast — {time_to_capacity:.1f} minutes remaining, consider intervention"
+        elif trend_alert_status == "CRITICAL":
+            log_msg = f"Capacity will be reached in under 2 minutes — immediate action needed"
+            
+        if log_msg:
+            alert_manager._add_to_history(trend_alert_status, log_msg)
+            last_trend_alert_fired_at = now
+            last_trend_message = log_msg
+            
+    # Write to CSV log
+    log_counts_to_csv(yolo_count, csrnet_count, raw_model_selected, fill_rate=fill_rate, time_to_capacity=time_to_capacity)
 
     # 6. Calculate risk scores per zone based on local density limit
     caution_pct = float(alert_manager.caution_at) if hasattr(alert_manager, 'caution_at') else 70.0
@@ -347,7 +485,9 @@ def process_frame(frame, detection_mode="auto"):
         'raw_density_map': density_map if density_map is not None else np.zeros((96, 128), dtype=np.float32),
         'avg_speeds': avg_speeds,
         'dir_variances': dir_variances,
-        'tracked_objects': tracked_objects
+        'tracked_objects': tracked_objects,
+        'fill_rate': fill_rate,
+        'time_to_capacity': time_to_capacity
     }
 
 def draw_grid_overlay(frame, grid, risk_grid):
@@ -954,6 +1094,8 @@ def frame_generator(mode: str):
             metrics_cache["caution_at"] = getattr(alert_manager, 'caution_at', 70)
             metrics_cache["avg_speeds"] = result.get('avg_speeds').tolist() if hasattr(result.get('avg_speeds'), 'tolist') else result.get('avg_speeds', [])
             metrics_cache["dir_variances"] = result.get('dir_variances').tolist() if hasattr(result.get('dir_variances'), 'tolist') else result.get('dir_variances', [])
+            metrics_cache["fill_rate"] = result.get("fill_rate", 0.0)
+            metrics_cache["time_to_capacity"] = result.get("time_to_capacity", 60.0)
             
             # Compute real YOLO/SAHI detection average confidence
             yolo_det = result['raw_yolo_detections']

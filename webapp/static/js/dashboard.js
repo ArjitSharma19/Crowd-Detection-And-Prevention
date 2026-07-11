@@ -28,6 +28,7 @@ const elPeopleNow = document.getElementById('stat-people-now');
 const elLimit = document.getElementById('stat-limit');
 const elProgressBar = document.getElementById('capacity-progress-bar');
 const elCapacityText = document.getElementById('capacity-text');
+const elTrendIndicator = document.getElementById('trend-indicator');
 const elLogList = document.getElementById('log-list');
 
 // Sliders and Value spans
@@ -333,6 +334,33 @@ function startMetricsPolling() {
             
             // Update UI count states using actual detector readings and capacity limits from backend
             updateCrowdState(data.current_count, data.max_capacity || thresholds.maxPeople, data.status, data.status_message);
+            
+            // Update Trend Indicator
+            if (elTrendIndicator) {
+                const fillRate = data.fill_rate !== undefined ? data.fill_rate : 0.0;
+                const timeToCap = data.time_to_capacity !== undefined ? data.time_to_capacity : 60.0;
+                
+                if (fillRate >= 1.0) {
+                    const isCritical = timeToCap < 2.0 || (fillRate >= 5.0 && timeToCap < 5.0);
+                    elTrendIndicator.style.display = 'flex';
+                    const formattedRate = fillRate.toFixed(1);
+                    const formattedTime = timeToCap.toFixed(1);
+                    
+                    if (isCritical) {
+                        elTrendIndicator.style.color = '#ef4444'; // Red
+                        elTrendIndicator.innerHTML = `<span>↑ +${formattedRate} people/min · ~${formattedTime} min to capacity</span>`;
+                    } else {
+                        elTrendIndicator.style.color = '#f59e0b'; // Amber
+                        elTrendIndicator.innerHTML = `<span>↑ +${formattedRate} people/min · ~${formattedTime} min to capacity</span>`;
+                    }
+                } else if (fillRate <= -1.0) {
+                    elTrendIndicator.style.display = 'flex';
+                    elTrendIndicator.style.color = '#10b981'; // Green
+                    elTrendIndicator.innerHTML = `<span>↓ Crowd dispersing</span>`;
+                } else {
+                    elTrendIndicator.style.display = 'none';
+                }
+            }
             
             // Set the real confidence readout from the active model
             elConfidenceBadge.textContent = data.avg_confidence || 'N/A';
