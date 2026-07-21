@@ -1,18 +1,28 @@
-version: '3.8'
-
 services:
+  mongo:
+    image: mongo:latest
+    container_name: crowdshield-db
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    restart: unless-stopped
+
   crowdshield-ai:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: crowdshield-ai
+    depends_on:
+      - mongo
     ports:
       - "8000:8000"
     environment:
       - HOST=0.0.0.0
       - PORT=8000
       - RELOAD=false
-      - VIDEO_SOURCE=/app/data/tesr_video_5.mp4 # Path to the copied test video inside the container
+      - MONGO_URI=mongodb://mongo:27017/crowdshield
+      - VIDEO_SOURCE=/app/data/tesr_video_5.mp4
     volumes:
       - ./data:/app/data
       - ./models:/app/models
@@ -24,3 +34,7 @@ services:
               count: all
               capabilities: [ gpu ]
     restart: unless-stopped
+
+volumes:
+  mongo-data:
+

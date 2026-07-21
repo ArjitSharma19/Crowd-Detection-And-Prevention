@@ -114,8 +114,6 @@ def main():
             return_points=(args.loss == 'dm_count')
         )
     else:  # shanghai_a or shanghai_b
-        if args.loss == 'dm_count':
-            raise NotImplementedError("DM-Count loss collation is currently only configured for JHU dataset loader.")
         # Gather all pairs
         train_pairs = align_shanghaitech_files(args.train_img_dir, args.train_gt_dir)
         if not train_pairs:
@@ -137,12 +135,14 @@ def main():
             pairs=train_pairs,
             max_size=args.max_size,
             is_train=True,
-            crop_size=(args.crop_size, args.crop_size)
+            crop_size=(args.crop_size, args.crop_size),
+            return_points=(args.loss == 'dm_count')
         )
         val_dataset = ShanghaiTechDataset(
             pairs=val_pairs,
             max_size=args.max_size,
-            is_train=False
+            is_train=False,
+            return_points=(args.loss == 'dm_count')
         )
         
     print(f"Dataset selected: {args.dataset.upper()}")

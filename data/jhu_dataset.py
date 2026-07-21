@@ -245,11 +245,12 @@ class ShanghaiTechDataset(Dataset):
     """
     Custom PyTorch Dataset for ShanghaiTech Part A and Part B.
     """
-    def __init__(self, pairs, max_size=1024, is_train=False, crop_size=(512, 512)):
+    def __init__(self, pairs, max_size=1024, is_train=False, crop_size=(512, 512), return_points=False):
         self.pairs = pairs
         self.max_size = max_size
         self.is_train = is_train
         self.crop_size = crop_size
+        self.return_points = return_points
         
     def __len__(self):
         return len(self.pairs)
@@ -298,10 +299,12 @@ class ShanghaiTechDataset(Dataset):
         chw = np.transpose(normalized, (2, 0, 1))
         img_tensor = torch.from_numpy(chw)
         
+        if self.return_points:
+            return img_tensor, torch.from_numpy(points), len(points)
+            
         h_target, w_target = h // 8, w // 8
         density_map = generate_density_map_adaptive(points, (h, w), target_shape=(h_target, w_target))
         density_tensor = torch.from_numpy(density_map).unsqueeze(0)
         
         return img_tensor, density_tensor
-        
-        return img_tensor, density_tensor
+
