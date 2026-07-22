@@ -58,6 +58,18 @@ class ResCSRNet(nn.Module):
         x = self.output_layer(x)
         return x
 
+    def train(self, mode=True):
+        """
+        Sets model training mode while ensuring frozen BatchNorm layers in frontend stay in eval mode.
+        """
+        super(ResCSRNet, self).train(mode)
+        if mode:
+            # Keep frozen stem & layer1 BatchNorm layers in eval mode for training stability with small batch size
+            for m in [self.frontend[0], self.frontend[1], self.frontend[4]]:
+                for sub in m.modules():
+                    if isinstance(sub, nn.BatchNorm2d):
+                        sub.eval()
+
     def _initialize_backend_weights(self):
         """
         Initializes backend convolutional layers with Gaussian distribution (std=0.01).
