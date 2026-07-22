@@ -43,7 +43,9 @@ import matplotlib.pyplot as plt
 INPUT_PATH = r"crowd density.v1-v1.yolov8/valid/images"
 INPUT_TYPE = "images"
 YOLO_MODEL_PATH = "models/yolo11m_best.pt"
-CSRNET_MODEL_PATH = "models/csrnet_jhu_dmcount_best.pth"
+CSRNET_MODEL_PATH = "models/rescsrnet_jhu_dmcount_best.pth"
+if not os.path.exists(CSRNET_MODEL_PATH):
+    CSRNET_MODEL_PATH = "models/csrnet_jhu_dmcount_best.pth"
 if not os.path.exists(CSRNET_MODEL_PATH):
     CSRNET_MODEL_PATH = "models/csrnet_partA_finetuned_best.pth"
 if not os.path.exists(CSRNET_MODEL_PATH):
@@ -227,7 +229,11 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     detector = CrowdDetector(model_path=yolo_path)
     detector.model_type = "crowd"
-    csrnet = load_csrnet_model(csrnet_path, device)
+    if "rescsrnet" in csrnet_path.lower():
+        from src.rescsrnet_model import load_rescsrnet_model
+        csrnet = load_rescsrnet_model(csrnet_path, device)
+    else:
+        csrnet = load_csrnet_model(csrnet_path, device)
     
     db_features, db_paths = build_or_load_database()
     

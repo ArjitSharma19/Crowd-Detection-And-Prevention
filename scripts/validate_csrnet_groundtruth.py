@@ -135,11 +135,15 @@ def main():
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
-    # 3. Load CSRNet Model
+    # 3. Load Model (CSRNet or ResCSRNet)
     if os.path.exists(weights_path):
         print(f"Loading custom weights from '{weights_path}'...")
         try:
-            model = load_csrnet_model(weights_path, device)
+            if "rescsrnet" in weights_path.lower():
+                from src.rescsrnet_model import load_rescsrnet_model
+                model = load_rescsrnet_model(weights_path, device)
+            else:
+                model = load_csrnet_model(weights_path, device)
             print("Model weights loaded successfully.")
         except Exception as e:
             print(f"Error loading model weights: {e}. Falling back to default initialization.")

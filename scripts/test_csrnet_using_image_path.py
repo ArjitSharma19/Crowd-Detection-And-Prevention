@@ -22,7 +22,9 @@ from src.csrnet_inference import estimate_density, get_zone_densities, density_m
 # EDITABLE VARIABLES
 # =====================================================================
 TEST_IMAGE_PATH = "test_image/test_image.jpg"                  # Path to the test image
-WEIGHTS_PATH = "models/csrnet_partA_finetuned_best.pth"
+WEIGHTS_PATH = "models/csrnet_jhu_dmcount_best.pth"
+if not os.path.exists(WEIGHTS_PATH):
+    WEIGHTS_PATH = "models/csrnet_partA_finetuned_best.pth"
 if not os.path.exists(WEIGHTS_PATH):
     WEIGHTS_PATH = "models/csrnet_shanghaitech.pth"     # Path to CSRNet pretrained weights
 OUTPUT_HEATMAP_PATH = "test_image/test_heatmap.jpg"            # Output heatmap image file
