@@ -32,18 +32,20 @@ def get_args():
     parser.add_argument('--val_img_dir', type=str, default=None, help="Path to validation images directory (optional).")
     parser.add_argument('--val_gt_dir', type=str, default=None, help="Path to validation ground-truth directory (optional).")
     
-    parser.add_argument('--epochs', type=int, default=150, help="Number of epochs to train (default: 150).")
+    parser.add_argument('--epochs', type=int, default=60, help="Number of epochs to train (default: 60).")
     parser.add_argument('--batch_size', type=int, default=2, help="Batch size (default: 2).")
     parser.add_argument('--lr', type=float, default=1e-4, help="Starting learning rate (default: 1e-4).")
     parser.add_argument('--max_size', type=int, default=1024, help="Maximum image dimension during evaluation (default: 1024).")
     parser.add_argument('--crop_size', type=int, default=384, help="Random crop size for training (default: 384).")
     parser.add_argument('--filter_blur', action='store_true', help="Filter out heavily blurred images from the JHU training set.")
-    parser.add_argument('--patience', type=int, default=20, help="Patience epochs for early stopping (default: 20).")
+    parser.add_argument('--patience', type=int, default=30, help="Patience epochs for early stopping (default: 30).")
     parser.add_argument('--weights', type=str, default="models/csrnet_shanghaitech.pth",
                         help="Path to baseline pretrained weights (default: models/csrnet_shanghaitech.pth).")
     parser.add_argument('--device', type=str, default=None, help="Device to use: 'cuda' or 'cpu'.")
-    parser.add_argument('--loss', type=str, default='mse', choices=['mse', 'dm_count'],
-                        help="Loss function to use: 'mse' or 'dm_count' (default: 'mse').")
+    parser.add_argument('--loss', type=str, default='dm_count', choices=['mse', 'dm_count'],
+                        help="Loss function to use: 'mse' or 'dm_count' (default: 'dm_count').")
+    parser.add_argument('--scheduler', type=str, default='cosine', choices=['cosine', 'plateau'],
+                        help="Learning rate scheduler: 'cosine' (with 5-epoch warmup) or 'plateau'.")
     return parser.parse_args()
 
 def align_shanghaitech_files(img_dir, gt_dir):
@@ -184,7 +186,16 @@ def main():
         criterion = nn.MSELoss(reduction='sum')
         
     optimizer = torch.optim.AdamW(trainable_params, lr=args.lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
+    if args.scheduler == 'cosine':
+        warmup_epochs = 5
+        def lr_lambda(ep):
+            if ep < warmup_epochs:
+                return float(ep + 1) / float(warmup_epochs)
+            progress = float(ep - warmup_epochs) / float(max(1, args.epochs - warmup_epochs))
+            return 0.5 * (1.0 + math.cos(math.pi * progress))
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+    else:
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
     
     # 5. Output configurations and files
     os.makedirs("models", exist_ok=True)
@@ -323,11 +334,14 @@ def main():
         avg_val_mae = val_mae / len(val_dataset)
         
         old_lr = optimizer.param_groups[0]['lr']
-        scheduler.step(avg_val_mae)
+        if args.scheduler == 'cosine':
+            scheduler.step()
+        else:
+            scheduler.step(avg_val_mae)
+            if optimizer.param_groups[0]['lr'] < old_lr:
+                print(f"Learning rate decayed from {old_lr:.1e} to {optimizer.param_groups[0]['lr']:.1e}. Resetting early stopping counter.")
+                epochs_no_improve = 0
         new_lr = optimizer.param_groups[0]['lr']
-        if new_lr < old_lr:
-            print(f"Learning rate decayed from {old_lr:.1e} to {new_lr:.1e}. Resetting early stopping counter.")
-            epochs_no_improve = 0
             
         epoch_time = time.time() - epoch_start
         print(f"Summary -> Epoch {epoch:02d} | Train Loss: {avg_train_loss:.6f} | Val Loss: {avg_val_loss:.6f} | Val MAE: {avg_val_mae:.2f} | LR: {new_lr:.1e} | Time: {epoch_time:.1f}s")

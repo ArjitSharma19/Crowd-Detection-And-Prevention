@@ -120,6 +120,12 @@ def augment_data(img, points, crop_size=(512, 512)):
             points[:, 0] -= x_start
             points[:, 1] -= y_start
             
+    # 4. Color / Brightness & Contrast Jitter (Augmentation for lighting robustness)
+    if np.random.random() > 0.5:
+        alpha = np.random.uniform(0.85, 1.15)  # Contrast adjustment
+        beta = np.random.uniform(-12, 12)       # Brightness shift
+        img = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
+            
     return img, points
 
 
