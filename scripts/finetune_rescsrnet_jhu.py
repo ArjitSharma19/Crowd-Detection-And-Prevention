@@ -106,10 +106,20 @@ def main():
     frozen_params = [p for p in model.parameters() if not p.requires_grad]
     print(f"Model Parameters: Trainable = {sum(p.numel() for p in trainable_params):,} | Frozen = {sum(p.numel() for p in frozen_params):,}")
     
-    # Loss & Optimizer
+    # Loss & Differential Optimizer Setup
     criterion = DMCountLoss(lambda_ot=0.1, lambda_tv=0.01, device=device)
-    optimizer = torch.optim.AdamW(trainable_params, lr=args.lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=4, verbose=True)
+    
+    # Differential learning rates: 0.1x for pretrained ResNet-50 frontend, 1.0x for dilated backend & output layer
+    frontend_params = [p for p in model.frontend.parameters() if p.requires_grad]
+    backend_params = list(model.backend.parameters()) + list(model.output_layer.parameters())
+    
+    optimizer = torch.optim.AdamW([
+        {'params': frontend_params, 'lr': args.lr * 0.1},
+        {'params': backend_params, 'lr': args.lr}
+    ], weight_decay=1e-4)
+    
+    # Scheduler with increased patience (8 epochs) to prevent premature LR decay
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=8, verbose=True)
     
     # Checkpoint paths
     os.makedirs("models", exist_ok=True)
