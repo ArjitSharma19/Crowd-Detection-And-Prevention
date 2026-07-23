@@ -78,9 +78,9 @@ alert_manager = AlertManager(max_capacity=1000, caution_at=70, density_limit=5.0
 
 # Initialize CSRNet Engine
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-weights_path = os.path.join(BASE_DIR, "models", "rescsrnet_jhu_dmcount_best.pth")
+weights_path = os.path.join(BASE_DIR, "models", "csrnet_jhu_dmcount_best.pth")
 if not os.path.exists(weights_path):
-    weights_path = os.path.join(BASE_DIR, "models", "csrnet_jhu_dmcount_best.pth")
+    weights_path = os.path.join(BASE_DIR, "models", "rescsrnet_jhu_dmcount_best.pth")
 if not os.path.exists(weights_path):
     weights_path = os.path.join(BASE_DIR, "models", "csrnet_partA_finetuned_best.pth")
 if not os.path.exists(weights_path):
