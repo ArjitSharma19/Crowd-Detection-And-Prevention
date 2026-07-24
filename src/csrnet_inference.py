@@ -49,35 +49,89 @@ def preprocess_frame(frame):
 
 
 
-def estimate_density(model, frame, device):
+def estimate_density(model, frame, device, use_tta=True, scales=(0.85, 1.0, 1.15)):
     """
     Runs CSRNet inference on a single frame to predict its density map and total crowd count.
+    Optionally applies Multi-Scale Test-Time Augmentation (TTA) with spatial map averaging.
     
     Args:
         model (nn.Module): Loaded CSRNet model.
         frame (np.ndarray): Input OpenCV BGR frame.
         device (torch.device): Device to run inference on (e.g. cpu or cuda).
+        use_tta (bool): If True, computes multi-scale & horizontal flip TTA (default: True).
+        scales (tuple): Scale factors to evaluate during TTA (default: (0.85, 1.0, 1.15)).
         
     Returns:
         tuple: (density_map, total_count)
             - density_map (np.ndarray): 2D float32 array representing local density.
             - total_count (float): Sum of all density values (predicted count of people).
     """
-    # Preprocess BGR frame to PyTorch tensor
-    input_tensor = preprocess_frame(frame).to(device)
-    
-    # Perform forward pass without tracking gradients (inference mode)
-    with torch.no_grad():
-        output = model(input_tensor)
+    if not use_tta:
+        input_tensor = preprocess_frame(frame).to(device)
+        with torch.no_grad():
+            output = model(input_tensor)
+        density_map = output.squeeze().cpu().numpy()
+        total_count = float(density_map.sum())
+        return density_map, total_count
         
-    # CSRNet output has shape (batch_size=1, channels=1, H_out, W_out).
-    # Squeeze dimensions to obtain a clean 2D density map array.
-    density_map = output.squeeze().cpu().numpy()
+    # Multi-Scale TTA Pipeline
+    base_w, base_h = 1024, 768
+    target_shape = (base_h // 8, base_w // 8) # (96, 128)
     
-    # The sum of all density values represents the total estimated number of people.
-    total_count = float(density_map.sum())
+    accum_density_map = np.zeros(target_shape, dtype=np.float32)
+    sample_count = 0
     
-    return density_map, total_count
+    with torch.no_grad():
+        for s in scales:
+            w_s = max(8, int(round(base_w * s / 8.0)) * 8)
+            h_s = max(8, int(round(base_h * s / 8.0)) * 8)
+            
+            # 1. Standard Scale Pass
+            resized_frame = cv2.resize(frame, (w_s, h_s), interpolation=cv2.INTER_LINEAR)
+            rgb_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
+            rgb_float = rgb_frame.astype(np.float32) / 255.0
+            mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+            std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+            normalized = (rgb_float - mean) / std
+            chw = np.transpose(normalized, (2, 0, 1))
+            tensor = torch.from_numpy(chw).unsqueeze(0).to(device)
+            
+            output = model(tensor)
+            map_s = output.squeeze().cpu().numpy()
+            orig_sum = map_s.sum()
+            
+            # Resize map back to base target shape (128, 96) and re-normalize count
+            resized_map = cv2.resize(map_s, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_LINEAR)
+            curr_sum = resized_map.sum()
+            if curr_sum > 0:
+                resized_map = resized_map * (orig_sum / curr_sum)
+            accum_density_map += resized_map
+            sample_count += 1
+            
+            # 2. Horizontally Flipped Pass
+            flip_frame = cv2.flip(resized_frame, 1)
+            rgb_flip = cv2.cvtColor(flip_frame, cv2.COLOR_BGR2RGB)
+            rgb_flip_float = rgb_flip.astype(np.float32) / 255.0
+            normalized_flip = (rgb_flip_float - mean) / std
+            chw_flip = np.transpose(normalized_flip, (2, 0, 1))
+            tensor_flip = torch.from_numpy(chw_flip).unsqueeze(0).to(device)
+            
+            output_flip = model(tensor_flip)
+            map_flip = output_flip.squeeze().cpu().numpy()
+            orig_flip_sum = map_flip.sum()
+            
+            # Unflip output map horizontally
+            unflipped_map = np.fliplr(map_flip)
+            resized_flip_map = cv2.resize(unflipped_map, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_LINEAR)
+            curr_flip_sum = resized_flip_map.sum()
+            if curr_flip_sum > 0:
+                resized_flip_map = resized_flip_map * (orig_flip_sum / curr_flip_sum)
+            accum_density_map += resized_flip_map
+            sample_count += 1
+
+    final_density_map = accum_density_map / max(1, sample_count)
+    total_count = float(final_density_map.sum())
+    return final_density_map, total_count
 
 
 def get_zone_densities(density_map, grid_rows=3, grid_cols=3):

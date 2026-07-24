@@ -10,8 +10,9 @@ import sys
 # Append the project workspace root to the python module search path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import custom CSRNet model loader
+# Import custom CSRNet model loader and inference functions
 from src.csrnet_model import load_csrnet_model, CSRNet
+from src.csrnet_inference import estimate_density
 
 # Try to use requests library, fallback to built-in urllib if not installed
 try:
@@ -50,6 +51,7 @@ def get_args():
     parser.add_argument('--max_size', type=int, default=1024, help="Maximum image dimension during evaluation (default: 1024).")
     parser.add_argument('--test_selected', action='store_true',
                         help="Validate only the 10 hardcoded test images (for ShanghaiTech A backward compatibility).")
+    parser.add_argument('--tta', action='store_true', help="Use Multi-Scale Test-Time Augmentation (TTA) during evaluation.")
     parser.add_argument('--device', type=str, default=None, help="Device to use: 'cuda' or 'cpu'.")
     return parser.parse_args()
 
@@ -186,10 +188,13 @@ def main():
             continue
             
         # Preprocess and estimate
-        input_tensor = preprocess_validation_image(frame, max_size=args.max_size).to(device)
-        with torch.no_grad():
-            output = model(input_tensor)
-        est_count = float(output.sum().item())
+        if args.tta:
+            _, est_count = estimate_density(model, frame, device, use_tta=True)
+        else:
+            input_tensor = preprocess_validation_image(frame, max_size=args.max_size).to(device)
+            with torch.no_grad():
+                output = model(input_tensor)
+            est_count = float(output.sum().item())
         
         # Determine ground truth count
         true_count = None
