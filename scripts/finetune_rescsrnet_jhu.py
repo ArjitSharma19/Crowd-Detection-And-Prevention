@@ -33,7 +33,7 @@ def get_args():
     parser.add_argument('--batch_size', type=int, default=2, help="Batch size (default: 2).")
     parser.add_argument('--lr', type=float, default=1e-4, help="Starting learning rate (default: 1e-4).")
     parser.add_argument('--max_size', type=int, default=1024, help="Maximum image dimension during evaluation (default: 1024).")
-    parser.add_argument('--crop_size', type=int, default=384, help="Random crop size for training (default: 384).")
+    parser.add_argument('--crop_size', type=int, default=512, help="Random density-aware crop size for training (default: 512).")
     parser.add_argument('--patience', type=int, default=25, help="Patience epochs for early stopping (default: 25).")
     parser.add_argument('--device', type=str, default=None, help="Device to use: 'cuda' or 'cpu'.")
     return parser.parse_args()

@@ -37,7 +37,7 @@ def get_args():
     parser.add_argument('--batch_size', type=int, default=2, help="Batch size (default: 2).")
     parser.add_argument('--lr', type=float, default=1e-4, help="Starting learning rate (default: 1e-4).")
     parser.add_argument('--max_size', type=int, default=1024, help="Maximum image dimension during evaluation (default: 1024).")
-    parser.add_argument('--crop_size', type=int, default=384, help="Random crop size for training (default: 384).")
+    parser.add_argument('--crop_size', type=int, default=512, help="Random crop size for training (default: 512).")
     parser.add_argument('--filter_blur', action='store_true', help="Filter out heavily blurred images from the JHU training set.")
     parser.add_argument('--patience', type=int, default=30, help="Patience epochs for early stopping (default: 30).")
     parser.add_argument('--weights', type=str, default="models/csrnet_shanghaitech.pth",
@@ -164,21 +164,15 @@ def main():
         print(f"Pretrained weights not found at '{args.weights}'. Initializing default CSRNet.")
         model = CSRNet(load_weights=False).to(device)
         
-    # Freezing first 3 conv blocks of the VGG16 backbone frontend
-    print("Freezing first 3 conv blocks of the VGG16 backbone frontend...")
-    pool_count = 0
-    for layer in model.frontend:
-        if isinstance(layer, nn.MaxPool2d):
-            pool_count += 1
-        if pool_count < 3:
-            for param in layer.parameters():
-                param.requires_grad = False
-                
-    trainable_params = [p for p in model.parameters() if p.requires_grad]
-    frozen_params = [p for p in model.parameters() if not p.requires_grad]
-    num_trainable = sum(p.numel() for p in trainable_params)
-    num_frozen = sum(p.numel() for p in frozen_params)
-    print(f"Model parameters: Trainable = {num_trainable:,} | Frozen = {num_frozen:,}")
+    # Use discriminative learning rates: low LR for pre-trained VGG backbone, higher LR for dilated backend
+    print("Setting up discriminative learning rates across VGG backbone (lr*0.1) and dilated backend (lr)...")
+    param_groups = [
+        {'params': model.frontend.parameters(), 'lr': args.lr * 0.1},
+        {'params': model.backend.parameters(), 'lr': args.lr},
+        {'params': model.output_layer.parameters(), 'lr': args.lr}
+    ]
+    num_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Model total trainable parameters: {num_trainable:,}")
 
     # 4. Set Loss & Optimizers
     if args.loss == 'dm_count':
@@ -186,7 +180,7 @@ def main():
     else:
         criterion = nn.MSELoss(reduction='sum')
         
-    optimizer = torch.optim.AdamW(trainable_params, lr=args.lr, weight_decay=1e-4)
+    optimizer = torch.optim.AdamW(param_groups, weight_decay=1e-4)
     if args.scheduler == 'cosine':
         warmup_epochs = 5
         def lr_lambda(ep):

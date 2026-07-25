@@ -83,12 +83,12 @@ def generate_density_map_adaptive(points, original_shape, target_shape=(96, 128)
 
 def augment_data(img, points, crop_size=(512, 512)):
     """
-    Applies random scale jitter, horizontal flip, and random crop to the image and coordinates.
+    Applies random scale jitter, horizontal flip, and density-aware random crop to the image and coordinates.
     """
     h, w = img.shape[:2]
     
-    # 1. Scale Jitter (0.8x to 1.2x)
-    scale_factor = np.random.uniform(0.8, 1.2)
+    # 1. Scale Jitter (0.7x to 1.3x)
+    scale_factor = np.random.uniform(0.7, 1.3)
     new_h = int(h * scale_factor)
     new_w = int(w * scale_factor)
     # Ensure dimensions are at least crop_size
@@ -105,16 +105,29 @@ def augment_data(img, points, crop_size=(512, 512)):
         if len(points) > 0:
             points[:, 0] = new_w - 1 - points[:, 0]
             
-    # 3. Random Crop
+    # 3. Density-Aware Crop Sampling (65% center on point, 35% uniform random)
     h, w = img.shape[:2]
-    y_start = np.random.randint(0, h - crop_size[0] + 1)
-    x_start = np.random.randint(0, w - crop_size[1] + 1)
+    crop_h, crop_w = crop_size[0], crop_size[1]
     
-    img = img[y_start:y_start + crop_size[0], x_start:x_start + crop_size[1]]
+    if len(points) > 0 and np.random.random() < 0.65:
+        # Pick a random point coordinate to center the crop around
+        rand_idx = np.random.randint(0, len(points))
+        cx, cy = points[rand_idx]
+        x_start = int(cx - crop_w / 2)
+        y_start = int(cy - crop_h / 2)
+        # Clamp coordinates to valid image boundaries
+        x_start = max(0, min(x_start, w - crop_w))
+        y_start = max(0, min(y_start, h - crop_h))
+    else:
+        # Fallback to uniform random crop
+        y_start = np.random.randint(0, h - crop_h + 1)
+        x_start = np.random.randint(0, w - crop_w + 1)
+        
+    img = img[y_start:y_start + crop_h, x_start:x_start + crop_w]
     
     if len(points) > 0:
-        mask = (points[:, 0] >= x_start) & (points[:, 0] < x_start + crop_size[1]) & \
-               (points[:, 1] >= y_start) & (points[:, 1] < y_start + crop_size[0])
+        mask = (points[:, 0] >= x_start) & (points[:, 0] < x_start + crop_w) & \
+               (points[:, 1] >= y_start) & (points[:, 1] < y_start + crop_h)
         points = points[mask]
         if len(points) > 0:
             points[:, 0] -= x_start

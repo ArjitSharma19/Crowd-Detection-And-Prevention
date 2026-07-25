@@ -52,8 +52,66 @@ def get_args():
     parser.add_argument('--test_selected', action='store_true',
                         help="Validate only the 10 hardcoded test images (for ShanghaiTech A backward compatibility).")
     parser.add_argument('--tta', action='store_true', help="Use Multi-Scale Test-Time Augmentation (TTA) during evaluation.")
+    parser.add_argument('--tiled', action='store_true', help="Use Full-Resolution Sliding Window Tiled Evaluation to prevent downscaling small heads.")
     parser.add_argument('--device', type=str, default=None, help="Device to use: 'cuda' or 'cpu'.")
     return parser.parse_args()
+
+def predict_density_tiled(model, frame, device, tile_size=512, stride=384):
+    """
+    Evaluates high-resolution images in overlapping tiles at native scale without severe downscaling.
+    Accumulates density maps and normalizes overlapping areas.
+    """
+    h, w = frame.shape[:2]
+    
+    # Pad image so H and W are multiples of 8 and at least tile_size
+    pad_h = max(tile_size, int(np.ceil(h / 8.0)) * 8)
+    pad_w = max(tile_size, int(np.ceil(w / 8.0)) * 8)
+    
+    target_h, target_w = pad_h // 8, pad_w // 8
+    
+    full_density = np.zeros((target_h, target_w), dtype=np.float32)
+    weight_map = np.zeros((target_h, target_w), dtype=np.float32)
+    
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    rgb_float = rgb.astype(np.float32) / 255.0
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    normalized = (rgb_float - mean) / std
+    
+    padded_img = np.zeros((pad_h, pad_w, 3), dtype=np.float32)
+    padded_img[:h, :w, :] = normalized
+    
+    y_steps = list(range(0, pad_h - tile_size + 1, stride))
+    if y_steps[-1] < pad_h - tile_size:
+        y_steps.append(pad_h - tile_size)
+        
+    x_steps = list(range(0, pad_w - tile_size + 1, stride))
+    if x_steps[-1] < pad_w - tile_size:
+        x_steps.append(pad_w - tile_size)
+        
+    with torch.no_grad():
+        for y in y_steps:
+            for x in x_steps:
+                tile = padded_img[y:y+tile_size, x:x+tile_size, :]
+                chw = np.transpose(tile, (2, 0, 1))
+                tensor = torch.from_numpy(chw).unsqueeze(0).to(device)
+                
+                out = model(tensor)
+                tile_density = out.squeeze().cpu().numpy()
+                
+                y_grid, x_grid = y // 8, x // 8
+                th_grid, tw_grid = tile_size // 8, tile_size // 8
+                
+                full_density[y_grid:y_grid+th_grid, x_grid:x_grid+tw_grid] += tile_density
+                weight_map[y_grid:y_grid+th_grid, x_grid:x_grid+tw_grid] += 1.0
+                
+    orig_grid_h, orig_grid_w = h // 8, w // 8
+    if orig_grid_h > 0 and orig_grid_w > 0:
+        full_density = full_density[:orig_grid_h, :orig_grid_w]
+        weight_map = weight_map[:orig_grid_h, :orig_grid_w]
+        
+    full_density = full_density / np.maximum(weight_map, 1e-5)
+    return float(full_density.sum())
 
 def preprocess_validation_image(img, max_size=1024):
     """
@@ -188,7 +246,9 @@ def main():
             continue
             
         # Preprocess and estimate
-        if args.tta:
+        if args.tiled:
+            est_count = predict_density_tiled(model, frame, device, tile_size=512, stride=384)
+        elif args.tta:
             _, est_count = estimate_density(model, frame, device, use_tta=True)
         else:
             input_tensor = preprocess_validation_image(frame, max_size=args.max_size).to(device)
