@@ -28,8 +28,8 @@ def get_args():
     parser = argparse.ArgumentParser(description="Fine-tune CSRNet on JHU-CROWD++ or ShanghaiTech datasets.")
     parser.add_argument('--dataset', type=str, required=True, choices=['jhu', 'shanghai_a', 'shanghai_b'],
                         help="The dataset type: 'jhu', 'shanghai_a', or 'shanghai_b'.")
-    parser.add_argument('--train_img_dir', type=str, required=True, help="Path to training images directory.")
-    parser.add_argument('--train_gt_dir', type=str, required=True, help="Path to training ground-truth directory.")
+    parser.add_argument('--train_img_dir', type=str, default=None, help="Path to training images directory (optional, auto-detected if None).")
+    parser.add_argument('--train_gt_dir', type=str, default=None, help="Path to training ground-truth directory (optional, auto-detected if None).")
     parser.add_argument('--val_img_dir', type=str, default=None, help="Path to validation images directory (optional).")
     parser.add_argument('--val_gt_dir', type=str, default=None, help="Path to validation ground-truth directory (optional).")
     
@@ -94,10 +94,52 @@ def main():
     
     # 2. Build Datasets & Loaders
     if args.dataset == 'jhu':
-        # Train loader
+        # Auto-detect default JHU dataset paths if not explicitly provided
+        train_img_dir = args.train_img_dir
+        train_gt_dir = args.train_gt_dir
+        val_img_dir = args.val_img_dir
+        val_gt_dir = args.val_gt_dir
+
+        if not train_img_dir or not train_gt_dir:
+            possible_train_imgs = [
+                r"data\jhu_crowd_v2.0\jhu_crowd_v2.0\train\images",
+                r"archive\JHU\train\images",
+            ]
+            possible_train_gts = [
+                r"data\jhu_crowd_v2.0\jhu_crowd_v2.0\train\gt",
+                r"archive\JHU\train\gt",
+            ]
+            for img_p, gt_p in zip(possible_train_imgs, possible_train_gts):
+                if os.path.exists(img_p) and os.path.exists(gt_p):
+                    train_img_dir, train_gt_dir = img_p, gt_p
+                    break
+
+        if not val_img_dir or not val_gt_dir:
+            possible_val_imgs = [
+                r"data\jhu_crowd_v2.0\jhu_crowd_v2.0\val\images",
+                r"archive\JHU\val\images",
+            ]
+            possible_val_gts = [
+                r"data\jhu_crowd_v2.0\jhu_crowd_v2.0\val\gt",
+                r"archive\JHU\val\gt",
+            ]
+            for img_p, gt_p in zip(possible_val_imgs, possible_val_gts):
+                if os.path.exists(img_p) and os.path.exists(gt_p):
+                    val_img_dir, val_gt_dir = img_p, gt_p
+                    break
+
+        if not val_img_dir or not val_gt_dir:
+            val_img_dir = train_img_dir
+            val_gt_dir = train_gt_dir
+
+        print(f"JHU Train Images: {train_img_dir}")
+        print(f"JHU Train GT:     {train_gt_dir}")
+        print(f"JHU Val Images:   {val_img_dir}")
+        print(f"JHU Val GT:       {val_gt_dir}")
+
         train_dataset = JHUCrowdDataset(
-            images_dir=args.train_img_dir,
-            gt_dir=args.train_gt_dir,
+            images_dir=train_img_dir,
+            gt_dir=train_gt_dir,
             max_size=args.max_size,
             filter_blur=args.filter_blur,
             is_train=True,
@@ -105,9 +147,6 @@ def main():
             return_points=(args.loss == 'dm_count')
         )
         
-        # Validation loader
-        val_img_dir = args.val_img_dir if args.val_img_dir else args.train_img_dir
-        val_gt_dir = args.val_gt_dir if args.val_gt_dir else args.train_gt_dir
         val_dataset = JHUCrowdDataset(
             images_dir=val_img_dir,
             gt_dir=val_gt_dir,
@@ -152,9 +191,10 @@ def main():
     print(f"Train samples: {len(train_dataset)}")
     print(f"Val samples:   {len(val_dataset)}")
     
+    num_workers = 0 if os.name == 'nt' else 2
     collate = dm_count_collate if args.loss == 'dm_count' else None
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, collate_fn=collate)
-    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=4, collate_fn=collate)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=num_workers, collate_fn=collate)
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=num_workers, collate_fn=collate)
     
     # 3. Load Model
     if os.path.exists(args.weights):

@@ -88,8 +88,9 @@ def main():
     
     print(f"Train samples: {len(train_dataset)} | Val samples: {len(val_dataset)}")
     
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2, collate_fn=dm_count_collate)
-    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=2, collate_fn=dm_count_collate)
+    num_workers = 0 if os.name == 'nt' else 2
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=num_workers, collate_fn=dm_count_collate)
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=num_workers, collate_fn=dm_count_collate)
     
     # Initialize ResCSRNet
     print("Initializing ResCSRNet with ResNet-50 ImageNet backbone...")

@@ -64,6 +64,12 @@ class DMCountLoss(nn.Module):
                 # Skip OT loss for images with 0 people
                 continue
 
+            # Cap ground-truth points for OT calculation to max 300 points to prevent CUDA OOM
+            if n_pts > 300:
+                perm = torch.randperm(n_pts, device=device)[:300]
+                g_coords = g_coords[perm]
+                n_pts = 300
+
             p_w = pred_weights[b]
             p_coords = grid_coords[b]
             

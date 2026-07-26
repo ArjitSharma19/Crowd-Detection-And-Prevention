@@ -158,9 +158,10 @@ class JHUCrowdDataset(Dataset):
         self.return_points = return_points
         
         self.pairs = []
-        if not os.path.exists(images_dir) or not os.path.exists(gt_dir):
-            print(f"Warning: JHU Dataset directory not found at: {images_dir} or {gt_dir}")
-            return
+        if not os.path.exists(images_dir):
+            raise FileNotFoundError(f"JHU Images directory does not exist: {os.path.abspath(images_dir)}")
+        if not os.path.exists(gt_dir):
+            raise FileNotFoundError(f"JHU Ground-Truth directory does not exist: {os.path.abspath(gt_dir)}")
             
         img_files = sorted([f for f in os.listdir(images_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
         for img_file in img_files:
@@ -188,6 +189,9 @@ class JHUCrowdDataset(Dataset):
                         print(f"Warning: Failed to parse blur level for {gt_path}: {e}")
                         
                 self.pairs.append((img_path, gt_path))
+
+        if len(self.pairs) == 0:
+            raise FileNotFoundError(f"No matching image (.jpg/.png) and ground-truth (.txt) file pairs found in '{images_dir}' and '{gt_dir}'.")
 
     def __len__(self):
         return len(self.pairs)

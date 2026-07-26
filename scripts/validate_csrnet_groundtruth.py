@@ -152,16 +152,25 @@ def main():
     
     # 1. Resolve paths based on dataset if not specified
     if args.dataset == 'jhu':
-        images_dir = args.images_dir if args.images_dir else r"E:\Crowd Detection &  Prevention\archive\JHU\test\images"
-        gt_dir = args.gt_dir if args.gt_dir else r"E:\Crowd Detection &  Prevention\archive\JHU\test\gt"
-        weights_path = args.weights if args.weights else "models/csrnet_jhu_best.pth"
+        default_jhu_img = r"data\jhu_crowd_v2.0\jhu_crowd_v2.0\test\images"
+        default_jhu_gt = r"data\jhu_crowd_v2.0\jhu_crowd_v2.0\test\gt"
+        if not os.path.exists(default_jhu_img):
+            default_jhu_img = r"archive\JHU\test\images"
+            default_jhu_gt = r"archive\JHU\test\gt"
+        images_dir = args.images_dir if args.images_dir else default_jhu_img
+        gt_dir = args.gt_dir if args.gt_dir else default_jhu_gt
+        
+        default_weights = "models/csrnet_jhu_dmcount_best.pth"
+        if not os.path.exists(default_weights):
+            default_weights = "models/csrnet_jhu_best.pth"
+        weights_path = args.weights if args.weights else default_weights
     elif args.dataset == 'shanghai_a':
         images_dir = args.images_dir if args.images_dir else DEFAULT_SHANGHAI_A_IMAGES_DIR
         gt_dir = args.gt_dir if args.gt_dir else DEFAULT_SHANGHAI_A_GT_DIR
         weights_path = args.weights if args.weights else DEFAULT_SHANGHAI_A_WEIGHTS
     else:  # shanghai_b
-        images_dir = args.images_dir if args.images_dir else r"E:\Crowd Detection &  Prevention\archive\ShanghaiTech\part_B\test_data\images"
-        gt_dir = args.gt_dir if args.gt_dir else r"E:\Crowd Detection &  Prevention\archive\ShanghaiTech\part_B\test_data\ground-truth"
+        images_dir = args.images_dir if args.images_dir else r"archive\ShanghaiTech\part_B\test_data\images"
+        gt_dir = args.gt_dir if args.gt_dir else r"archive\ShanghaiTech\part_B\test_data\ground-truth"
         weights_path = args.weights if args.weights else "models/csrnet_shanghai_b_best.pth"
         
     if not os.path.exists(weights_path) and args.dataset == 'shanghai_a' and weights_path == DEFAULT_SHANGHAI_A_WEIGHTS:
