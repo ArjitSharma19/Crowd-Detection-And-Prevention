@@ -49,23 +49,96 @@ def preprocess_frame(frame):
 
 
 
-def estimate_density(model, frame, device, use_tta=True, scales=(0.85, 1.0, 1.15)):
+def estimate_density_tiled(model, frame, device, tile_size=512, stride=384):
+    """
+    Evaluates input frames using sliding window overlapping tiles at native image resolution.
+    Accumulates density maps across tiles and normalizes overlapping regions.
+    
+    Args:
+        model (nn.Module): Loaded CSRNet model.
+        frame (np.ndarray): Input OpenCV BGR frame.
+        device (torch.device): Device to run inference on.
+        tile_size (int): Tile dimensions in pixels (default: 512).
+        stride (int): Sliding window stride in pixels (default: 384).
+        
+    Returns:
+        tuple: (density_map, total_count)
+    """
+    h, w = frame.shape[:2]
+    
+    # Pad image so H and W are multiples of 8 and at least tile_size
+    pad_h = max(tile_size, int(np.ceil(h / 8.0)) * 8)
+    pad_w = max(tile_size, int(np.ceil(w / 8.0)) * 8)
+    
+    target_h, target_w = pad_h // 8, pad_w // 8
+    
+    full_density = np.zeros((target_h, target_w), dtype=np.float32)
+    weight_map = np.zeros((target_h, target_w), dtype=np.float32)
+    
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    rgb_float = rgb.astype(np.float32) / 255.0
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    normalized = (rgb_float - mean) / std
+    
+    padded_img = np.zeros((pad_h, pad_w, 3), dtype=np.float32)
+    padded_img[:h, :w, :] = normalized
+    
+    y_steps = list(range(0, pad_h - tile_size + 1, stride))
+    if y_steps[-1] < pad_h - tile_size:
+        y_steps.append(pad_h - tile_size)
+        
+    x_steps = list(range(0, pad_w - tile_size + 1, stride))
+    if x_steps[-1] < pad_w - tile_size:
+        x_steps.append(pad_w - tile_size)
+        
+    with torch.no_grad():
+        for y in y_steps:
+            for x in x_steps:
+                tile = padded_img[y:y+tile_size, x:x+tile_size, :]
+                chw = np.transpose(tile, (2, 0, 1))
+                tensor = torch.from_numpy(chw).unsqueeze(0).to(device)
+                
+                out = model(tensor)
+                tile_density = out.squeeze().cpu().numpy()
+                
+                y_grid, x_grid = y // 8, x // 8
+                th_grid, tw_grid = tile_size // 8, tile_size // 8
+                
+                full_density[y_grid:y_grid+th_grid, x_grid:x_grid+tw_grid] += tile_density
+                weight_map[y_grid:y_grid+th_grid, x_grid:x_grid+tw_grid] += 1.0
+                
+    orig_grid_h, orig_grid_w = h // 8, w // 8
+    if orig_grid_h > 0 and orig_grid_w > 0:
+        full_density = full_density[:orig_grid_h, :orig_grid_w]
+        weight_map = weight_map[:orig_grid_h, :orig_grid_w]
+        
+    full_density = full_density / np.maximum(weight_map, 1e-5)
+    total_count = float(full_density.sum())
+    return full_density, total_count
+
+
+def estimate_density(model, frame, device, use_tiled=True, use_tta=False, scales=(0.85, 1.0, 1.15)):
     """
     Runs CSRNet inference on a single frame to predict its density map and total crowd count.
-    Optionally applies Multi-Scale Test-Time Augmentation (TTA) with spatial map averaging.
+    Supports full-resolution tiled inference (default) and Multi-Scale Test-Time Augmentation (TTA).
     
     Args:
         model (nn.Module): Loaded CSRNet model.
         frame (np.ndarray): Input OpenCV BGR frame.
         device (torch.device): Device to run inference on (e.g. cpu or cuda).
-        use_tta (bool): If True, computes multi-scale & horizontal flip TTA (default: True).
-        scales (tuple): Scale factors to evaluate during TTA (default: (0.85, 1.0, 1.15)).
+        use_tiled (bool): If True, performs full-resolution sliding window tiled inference (default: True).
+        use_tta (bool): If True, computes multi-scale & horizontal flip TTA (default: False).
+        scales (tuple): Scale factors to evaluate during TTA.
         
     Returns:
         tuple: (density_map, total_count)
             - density_map (np.ndarray): 2D float32 array representing local density.
             - total_count (float): Sum of all density values (predicted count of people).
     """
+    if use_tiled:
+        return estimate_density_tiled(model, frame, device, tile_size=512, stride=384)
+
     if not use_tta:
         input_tensor = preprocess_frame(frame).to(device)
         with torch.no_grad():

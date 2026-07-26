@@ -116,31 +116,44 @@ class CSRNet(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
 
-def load_csrnet_model(weights_path, device):
+def load_csrnet_model(weights_path=None, device="cuda"):
     """
     Loads pretrained weights from a saved .pth file and returns the CSRNet model in evaluation mode.
+    Auto-detects the best available checkpoint if weights_path is None or missing.
     
     Args:
-        weights_path (str): Filepath pointing to the saved model checkpoint (.pth).
+        weights_path (str, optional): Filepath pointing to the saved model checkpoint (.pth).
         device (torch.device): Device to load tensors onto (e.g. cpu or cuda).
         
     Returns:
         CSRNet: CSRNet model configured for inference on the selected device.
     """
+    if weights_path is None or not os.path.exists(weights_path):
+        possible_weights = [
+            "models/csrnet_jhu_dmcount_best.pth",
+            "models/rescsrnet_jhu_dmcount_best.pth",
+            "models/csrnet_partA_finetuned_best.pth",
+            "models/csrnet_shanghaitech.pth"
+        ]
+        for w_path in possible_weights:
+            if os.path.exists(w_path):
+                weights_path = w_path
+                break
+                
     # Initialize CSRNet with load_weights=True to skip automatic download of VGG-16 weights
     model = CSRNet(load_weights=True)
     
-    # Load state dict
-    checkpoint = torch.load(weights_path, map_location=device)
-    
-    # Handle checkpoints saved either as a raw state dict or nested under a key
-    if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
-        state_dict = checkpoint['state_dict']
+    if weights_path and os.path.exists(weights_path):
+        print(f"CSRNet: Loading model weights from '{weights_path}'")
+        checkpoint = torch.load(weights_path, map_location=device)
+        if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        else:
+            state_dict = checkpoint
+        model.load_state_dict(state_dict)
     else:
-        state_dict = checkpoint
-        
-    model.load_state_dict(state_dict)
+        print("CSRNet: Warning - No valid weights file found. Model initialized without custom checkpoint.")
+
     model.to(device)
     model.eval()
-    
     return model
