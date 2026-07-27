@@ -17,11 +17,15 @@ import cv2
 import numpy as np
 
 # Camera Environment Slicing Configurations
-# "general": None (uses standard plain YOLO)
+# "general": 512x512 slices with 20% overlap
 # "venue": 640x640 slices with 25% overlap
 # "aerial": 384x384 slices with 30% overlap
 SLICE_CONFIG = {
-    "general": None,
+    "general": {
+        "slice_height": 512,
+        "slice_width": 512,
+        "overlap_ratio": 0.20
+    },
     "venue": {
         "slice_height": 640,
         "slice_width": 640,

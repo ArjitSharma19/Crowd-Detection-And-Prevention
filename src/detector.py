@@ -4,14 +4,14 @@ import numpy as np
 from ultralytics import YOLO
 
 class CrowdDetector:
-    def __init__(self, model_path=None, imgsz=960, confidence_threshold=0.25):
+    def __init__(self, model_path=None, imgsz=1280, confidence_threshold=0.15):
         """
         Initializes the YOLO object detector.
         Supports switching between a General Detector (trained on COCO) and a Crowd Detector (custom fine-tuned).
         """
         self.imgsz = imgsz
         self.confidence_threshold = confidence_threshold
-        self.model_type = "general"  # "general" or "crowd"
+        self.model_type = "crowd"  # Default to custom fine-tuned crowd model
 
         # Load general detector (standard pretrained model on disk)
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -60,11 +60,11 @@ class CrowdDetector:
         conf_val = confidence_threshold if confidence_threshold is not None else self.confidence_threshold
         
         # Select active model
-        active_model = self.model_general if self.model_type == "general" else self.model_crowd
+        active_model = self.model_crowd if self.model_type == "crowd" else self.model_general
         
         # Run inference with configuration parameters.
-        # iou=0.45 enforces Non-Maximum Suppression to prevent double overlapping boxes on the same person.
-        results = active_model(frame, imgsz=self.imgsz, conf=conf_val, iou=0.45, verbose=False)
+        # iou=0.55 allows adjacent overlapping people in medium crowds to be detected without over-suppression.
+        results = active_model(frame, imgsz=self.imgsz, conf=conf_val, iou=0.55, verbose=False)
         
         detections = []
         if len(results) > 0:
