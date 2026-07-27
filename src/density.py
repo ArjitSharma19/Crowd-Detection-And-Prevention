@@ -288,13 +288,19 @@ def should_use_csrnet(yolo_count, yolo_boxes, threshold=50, overlap_threshold=0.
                     overlapping_indices.add(j)
                     
     # Calculate what percentage of our detections are overlapping
-    # TUNING TIP: If 20% or more of the crowd is overlapping, we assume detection is breaking down
-    overlap_ratio_threshold = 0.20
+    overlap_ratio_threshold = 0.15  # 15% or more overlap triggers CSRNet
     overlap_ratio = len(overlapping_indices) / n_boxes
     
     if overlap_ratio >= overlap_ratio_threshold:
         return True
         
+    # Check average box height: if detected boxes are small (avg height < 50px) and count >= 15,
+    # it indicates distant or dense heads where CSRNet density estimation is far more accurate.
+    box_heights = [(b[3] - b[1]) for b in boxes]
+    avg_box_height = float(np.mean(box_heights)) if box_heights else 999.0
+    if n_boxes >= 15 and avg_box_height < 50.0:
+        return True
+
     return False
 
 
