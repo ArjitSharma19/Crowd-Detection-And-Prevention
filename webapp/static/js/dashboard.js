@@ -613,12 +613,44 @@ window.hideGuideModal = function() {
     document.getElementById('guide-modal').style.display = 'none';
 }
 
+window.togglePasswordVisibility = function() {
+    const pwdInput = document.getElementById('login-password');
+    const eyeIcon = document.getElementById('eye-icon');
+    const eyeOffIcon = document.getElementById('eye-off-icon');
+    if (!pwdInput) return;
+    
+    if (pwdInput.type === 'password') {
+        pwdInput.type = 'text';
+        if (eyeIcon) eyeIcon.style.display = 'none';
+        if (eyeOffIcon) eyeOffIcon.style.display = 'block';
+    } else {
+        pwdInput.type = 'password';
+        if (eyeIcon) eyeIcon.style.display = 'block';
+        if (eyeOffIcon) eyeOffIcon.style.display = 'none';
+    }
+};
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        const loginModal = document.getElementById('login-modal');
+        if (loginModal && loginModal.style.display === 'flex') {
+            submitLogin();
+        }
+    }
+});
+
 window.showLoginModal = function() {
     if (jwtToken) {
         logout();
     } else {
         const errorEl = document.getElementById('login-error');
         if (errorEl) errorEl.style.display = 'none';
+        const pwdInput = document.getElementById('login-password');
+        if (pwdInput) pwdInput.type = 'password';
+        const eyeIcon = document.getElementById('eye-icon');
+        const eyeOffIcon = document.getElementById('eye-off-icon');
+        if (eyeIcon) eyeIcon.style.display = 'block';
+        if (eyeOffIcon) eyeOffIcon.style.display = 'none';
         document.getElementById('login-modal').style.display = 'flex';
     }
 }
@@ -631,6 +663,7 @@ window.submitLogin = async function() {
     const usernameEl = document.getElementById('login-username');
     const passwordEl = document.getElementById('login-password');
     const errorEl = document.getElementById('login-error');
+    const btnSubmit = document.getElementById('btn-login-submit');
     
     if (!usernameEl || !passwordEl) return;
     
@@ -643,6 +676,11 @@ window.submitLogin = async function() {
             errorEl.style.display = 'block';
         }
         return;
+    }
+    
+    if (btnSubmit) {
+        btnSubmit.disabled = true;
+        btnSubmit.textContent = 'Authenticating...';
     }
     
     try {
@@ -676,6 +714,11 @@ window.submitLogin = async function() {
         if (errorEl) {
             errorEl.textContent = err.message || 'Login failed';
             errorEl.style.display = 'block';
+        }
+    } finally {
+        if (btnSubmit) {
+            btnSubmit.disabled = false;
+            btnSubmit.textContent = 'Sign In to Dashboard';
         }
     }
 }
