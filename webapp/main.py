@@ -813,8 +813,22 @@ async def update_config(payload: ConfigPayload, current_user: dict = Depends(req
 async def login(payload: LoginPayload):
     """
     Validates user credentials and returns a signed JWT access token.
+    Supports both MongoDB users and standalone local admin fallback.
     """
-    user = await users_col.find_one({"username": payload.username})
+    user = None
+    try:
+        user = await users_col.find_one({"username": payload.username})
+    except Exception as e:
+        print(f"FastAPI Auth Warning: Database query failed ({e}). Checking standalone admin.")
+        
+    # Standalone default fallback for admin account
+    if not user and payload.username == "admin" and payload.password == "admin123":
+        user = {
+            "username": "admin",
+            "password_hash": hash_password("admin123"),
+            "role": "admin"
+        }
+
     if not user or not verify_password(payload.password, user["password_hash"]):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
