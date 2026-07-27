@@ -2,10 +2,10 @@ import os
 import motor.motor_asyncio
 from datetime import datetime
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://host.docker.internal:27017/crowdshield")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/crowdshield")
 
-# Initialize Motor async client
-client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI)
+# Initialize Motor async client with fast fallback timeout
+client = motor.motor_asyncio.AsyncIOMotorClient(MONGO_URI, serverSelectionTimeoutMS=2500)
 db = client.get_default_database()
 
 # Collection references

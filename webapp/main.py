@@ -111,22 +111,25 @@ CSV_LOG_PATH = os.path.join(BASE_DIR, "data", "reports", "crowd_comparison.csv")
 
 @app.on_event("startup")
 async def startup_event():
-    # Hash default password "admin123" for seeding
-    admin_password_hash = hash_password("admin123")
-    await init_db(admin_password_hash)
-    
-    # Load settings from database
-    db_settings = await settings_col.find_one()
-    if db_settings:
-        alert_manager.max_capacity = db_settings.get("max_capacity", 1000)
-        alert_manager.caution_at = db_settings.get("caution_at", 70)
-        alert_manager.trigger_delay_seconds = db_settings.get("trigger_delay_seconds", 20.0)
-        detector.confidence_threshold = db_settings.get("confidence_threshold", 0.25)
-        detector.imgsz = db_settings.get("imgsz", 960)
-        detector.model_type = db_settings.get("model_type", "general")
-        global current_detection_mode
-        current_detection_mode = db_settings.get("detection_mode", "auto")
-        print("FastAPI: Loaded configuration parameters from MongoDB successfully.")
+    try:
+        # Hash default password "admin123" for seeding
+        admin_password_hash = hash_password("admin123")
+        await init_db(admin_password_hash)
+        
+        # Load settings from database
+        db_settings = await settings_col.find_one()
+        if db_settings:
+            alert_manager.max_capacity = db_settings.get("max_capacity", 1000)
+            alert_manager.caution_at = db_settings.get("caution_at", 70)
+            alert_manager.trigger_delay_seconds = db_settings.get("trigger_delay_seconds", 20.0)
+            detector.confidence_threshold = db_settings.get("confidence_threshold", 0.25)
+            detector.imgsz = db_settings.get("imgsz", 960)
+            detector.model_type = db_settings.get("model_type", "general")
+            global current_detection_mode
+            current_detection_mode = db_settings.get("detection_mode", "auto")
+            print("FastAPI: Loaded configuration parameters from MongoDB successfully.")
+    except Exception as e:
+        print(f"FastAPI: MongoDB unavailable ({e}). Server running in standalone mode with default settings.")
 
 def log_counts_to_csv(yolo_count, csrnet_count, model_selected, fill_rate=0.0, time_to_capacity=60.0):
     """
