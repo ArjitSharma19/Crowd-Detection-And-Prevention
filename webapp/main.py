@@ -32,6 +32,9 @@ from src.velocity import update_track_history, get_zone_velocity_stats, calculat
 from src.database import init_db, settings_col, log_incident_to_db, users_col
 from src.auth import hash_password, verify_password, create_access_token, require_admin_role
 
+# Reporting Imports
+from src.reports import generate_csv_log_export, generate_html_audit_report
+
 app = FastAPI(title="CrowdShield AI Backend")
 
 # Setup directories
@@ -745,6 +748,33 @@ async def get_current_status():
         "avg_speeds": metrics_cache.get("avg_speeds", []),
         "dir_variances": metrics_cache.get("dir_variances", [])
     }
+
+@app.get("/api/reports/csv")
+async def export_csv_report():
+    """
+    Returns full raw crowd telemetry log as a downloadable CSV attachment.
+    """
+    csv_content = generate_csv_log_export(CSV_LOG_PATH)
+    filename = f"crowd_audit_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+@app.get("/api/reports/pdf")
+async def export_pdf_report():
+    """
+    Generates and returns an Executive Safety Audit Report (printable HTML/PDF).
+    """
+    alert_history = alert_manager.get_history()
+    html_content = generate_html_audit_report(
+        metrics_cache=metrics_cache,
+        max_capacity=alert_manager.max_capacity,
+        caution_at=getattr(alert_manager, 'caution_at', 70),
+        alert_history=alert_history
+    )
+    return Response(content=html_content, media_type="text/html")
 
 @app.post("/api/config")
 async def update_config(payload: ConfigPayload, current_user: dict = Depends(require_admin_role)):

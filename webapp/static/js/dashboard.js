@@ -46,6 +46,64 @@ const sliderResolution = document.getElementById('slider-resolution');
 const valResolution = document.getElementById('val-resolution');
 const selectModelType = document.getElementById('select-model-type');
 
+// Chart.js Live Occupancy State
+let occupancyChart = null;
+const chartMaxPoints = 60;
+const chartData = {
+    labels: [],
+    datasets: [
+        {
+            label: 'Occupancy Count',
+            data: [],
+            borderColor: '#38bdf8',
+            backgroundColor: 'rgba(56, 189, 248, 0.15)',
+            fill: true,
+            tension: 0.3,
+            borderWidth: 2,
+            pointRadius: 0
+        },
+        {
+            label: 'Capacity Limit',
+            data: [],
+            borderColor: '#ef4444',
+            borderDash: [4, 4],
+            fill: false,
+            borderWidth: 1.5,
+            pointRadius: 0
+        }
+    ]
+};
+
+function initChart() {
+    const ctx = document.getElementById('occupancy-chart');
+    if (!ctx || typeof Chart === 'undefined') return;
+    
+    occupancyChart = new Chart(ctx, {
+        type: 'line',
+        data: chartData,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: { mode: 'index', intersect: false }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#64748b', font: { size: 10 }, maxTicksLimit: 8 }
+                },
+                y: {
+                    beginAtZero: true,
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                    ticks: { color: '#64748b', font: { size: 10 } }
+                }
+            }
+        }
+    });
+}
+
 // Initialize Dashboard
 document.addEventListener('DOMContentLoaded', () => {
     // Update Auth UI immediately on load
@@ -56,10 +114,13 @@ document.addEventListener('DOMContentLoaded', () => {
         // 2. Setup Threshold control listeners
         setupSliders();
         
-        // 3. Start real metrics polling loop
+        // 3. Initialize Live Analytics Chart
+        initChart();
+
+        // 4. Start real metrics polling loop
         startMetricsPolling();
         
-        // 4. Set initial view mode
+        // 5. Set initial view mode
         setViewMode(currentViewMode);
     });
 });
@@ -334,6 +395,21 @@ function startMetricsPolling() {
             
             // Update UI count states using actual detector readings and capacity limits from backend
             updateCrowdState(data.current_count, data.max_capacity || thresholds.maxPeople, data.status, data.status_message);
+            
+            // Update real-time chart data
+            if (occupancyChart) {
+                const nowLabel = new Date().toLocaleTimeString();
+                chartData.labels.push(nowLabel);
+                chartData.datasets[0].data.push(Math.round(data.current_count));
+                chartData.datasets[1].data.push(data.max_capacity || thresholds.maxPeople);
+
+                if (chartData.labels.length > chartMaxPoints) {
+                    chartData.labels.shift();
+                    chartData.datasets[0].data.shift();
+                    chartData.datasets[1].data.shift();
+                }
+                occupancyChart.update('none');
+            }
             
             // Update Trend Indicator
             if (elTrendIndicator) {
