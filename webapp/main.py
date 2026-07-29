@@ -51,7 +51,7 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # =====================================================================
 # Set to 0 to use your webcam, or a string path to a video file.
 # Example: VIDEO_SOURCE = r"C:\path\to\your\video.mp4"
-VIDEO_SOURCE = os.getenv("VIDEO_SOURCE", r"E:\tesr_video_5.mp4")
+VIDEO_SOURCE = os.getenv("VIDEO_SOURCE", r"E:\high_crowd.mp4")
 
 # Since environment variables are strings, check if it's an integer digit (like "0")
 if isinstance(VIDEO_SOURCE, str) and VIDEO_SOURCE.strip().isdigit():
