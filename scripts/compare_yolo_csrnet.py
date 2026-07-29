@@ -57,6 +57,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.detector import CrowdDetector
 from src.csrnet_model import load_csrnet_model
+from src.csrnet_inference import estimate_density
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run YOLO and CSRNet comparison side-by-side.")
@@ -323,10 +324,7 @@ def main():
                 csrnet_frame = frame
                 csrnet_gt_count = yolo_count
                 
-            input_tensor = preprocess_csrnet_image(csrnet_frame, max_size=1024).to(device)
-            with torch.no_grad():
-                output = csrnet(input_tensor)
-            csrnet_count = float(output.sum().item())
+            _, csrnet_count = estimate_density(csrnet, csrnet_frame, device, use_tiled=True)
             
             yolo_gt_count = 0
             base_name = os.path.splitext(fn)[0]
