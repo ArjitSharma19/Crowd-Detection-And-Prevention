@@ -22,7 +22,7 @@ services:
       - PORT=8000
       - RELOAD=false
       - MONGO_URI=mongodb://mongo:27017/crowdshield
-      - VIDEO_SOURCE=/app/data/tesr_video_5.mp4
+      - VIDEO_SOURCE=/app/data/high_crowd.mp4
     volumes:
       - ./data:/app/data
       - ./models:/app/models
